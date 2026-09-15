@@ -41,7 +41,13 @@ def _spec(text=SAVED, scheme=None):
 
 
 def _write(text):
-    handle = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False)
+    # newline="" is not optional: these fixtures are raw HTTP requests whose
+    # lines already end in CRLF, and text-mode translation would turn each of
+    # them into "\r\r\n" on Windows. The parser would then see a blank line
+    # after the request line, take it for the end of the header block, and
+    # reject a file that is perfectly well formed on disk.
+    handle = tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False,
+                                         newline="")
     handle.write(text)
     handle.close()
     return handle.name
@@ -188,6 +194,18 @@ class MalformedFileTests(unittest.TestCase):
         path = _write(SAVED)
         try:
             self.assertEqual(load_request(path).method, "POST")
+        finally:
+            os.unlink(path)
+
+    def test_the_fixture_reaches_the_disk_byte_for_byte(self):
+        # A saved request is CRLF on the wire and CRLF in the file. If the
+        # helper that writes these fixtures lets the platform rewrite the line
+        # endings, every file-based test here is handed a request the parser is
+        # right to reject, and the suite blames the product for it.
+        path = _write(SAVED)
+        try:
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(), SAVED.encode("utf-8"))
         finally:
             os.unlink(path)
 
