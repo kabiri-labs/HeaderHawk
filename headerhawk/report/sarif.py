@@ -90,6 +90,19 @@ def build_sarif(results, version=None):
                 # transition: alerts a platform already holds under v1 do not
                 # match a v2 fingerprint, so they close and reopen once - and
                 # then stop churning, which is the point.
+                #
+                # The folding is by shape, not by provenance, so it cannot tell
+                # a generated marker from a hexadecimal value that means
+                # something: two virtual hosts from a custom wordlist of hex
+                # names file under one fingerprint, where the old algorithm
+                # kept them apart. Both findings still appear in full in every
+                # report - it is the dashboard's grouping that merges them -
+                # and the alternative is worse. Narrowing the fold would mean
+                # changing the identity ``--baseline`` matches on, which would
+                # make every finding a team has already accepted look new. The
+                # fix is to make the markers recognisable rather than to guess
+                # at them, which is a change to the checks, not to this
+                # writer.
                 "hostHeaderScanner/v2": finding_identity(result),
             },
         }

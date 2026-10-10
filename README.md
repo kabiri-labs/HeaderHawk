@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-2.14.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-587%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-588%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -344,7 +344,7 @@ python headerhawk.py https://app.example.com --baseline baseline.json \
 
 `--baseline` reports `N new, N fixed, N unchanged`. `--fail-on-new` narrows the gate to the new ones, so a team that has accepted its current findings gets a pipeline that fails on a **regression** instead of failing permanently — which is the difference between a gate that stays on and one that gets deleted.
 
-A finding keeps the same identity between runs even though several checks put a fresh random marker in every payload: marker-shaped tokens are folded out before matching. Without that, every finding would look new on every run. The SARIF fingerprint is that same identity, so an alert `--baseline` calls unchanged is not a fresh alert on the dashboard.
+A finding keeps the same identity between runs even though several checks put a fresh random marker in every payload: marker-shaped tokens are folded out before matching. Without that, every finding would look new on every run. The SARIF fingerprint is that same identity, so an alert `--baseline` calls unchanged is not a fresh alert on the dashboard. The folding goes by shape rather than by provenance, so at worst it files two findings that differ only by a hexadecimal value — two virtual hosts from a custom wordlist of hex names, say — under one identity. Both still appear in full in every report; it never invents a finding that was not there.
 
 ### PCI DSS 4.0.1 requirement 11.6.1
 
@@ -482,7 +482,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 587 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 588 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.

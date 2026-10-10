@@ -123,6 +123,26 @@ class FingerprintStabilityTests(unittest.TestCase):
         other = _finding("Host Header Injection", header_name="X-Original-Host")
         self.assertNotEqual(self._print(one), self._print(other))
 
+    def test_a_meaningful_hex_payload_is_folded_too_which_is_the_trade(self):
+        # The fold is by shape, so it cannot tell a generated marker from a
+        # hexadecimal value that means something: two virtual hosts named in
+        # hex file under one fingerprint. Pinned rather than left to be
+        # discovered, because the alternative - narrowing the fold - would
+        # change the identity --baseline matches on and make every finding a
+        # team has already accepted look new. Both findings still appear in
+        # full in every report; only the dashboard groups them.
+        one = _finding("Virtual Host Discovery", header_name="Host",
+                       payload="deadbeef")
+        other = _finding("Virtual Host Discovery", header_name="Host",
+                         payload="cafebabe")
+        self.assertEqual(self._print(one), self._print(other))
+        # A name that is not hexadecimal is unaffected, which is every entry
+        # of the built-in wordlist.
+        self.assertNotEqual(self._print(_finding("Virtual Host Discovery",
+                                                 payload="admin")),
+                            self._print(_finding("Virtual Host Discovery",
+                                                 payload="staging")))
+
     def test_the_fingerprint_is_the_identity_the_baseline_matches_on(self):
         # One definition of "the same finding" for both features, so an alert
         # that --baseline calls unchanged is not a new alert on the dashboard.
