@@ -23,6 +23,11 @@ class OOBManager:
     webhook.site, RequestBin, Burp Collaborator exports, custom sinks, etc.
     """
 
+    # An export that carries this scan's id but no individual payload hostname
+    # proves an interaction happened without saying which payload caused it. It
+    # is reported under this label rather than against every payload at once.
+    UNATTRIBUTED = "unattributed"
+
     def __init__(self, oob_domain, poll_url=None):
         self.oob_domain = oob_domain.strip("/").lstrip(".")
         self.poll_url = poll_url
@@ -38,21 +43,34 @@ class OOBManager:
         return f"http://{self.host(label)}/"
 
     def poll(self, session, timeout, attempts=4, delay=3):
+        """Poll the listener export and return the payload labels it names.
+
+        A label counts as a hit only when the hostname built for *that* label
+        appears in the body. Accepting the scan id instead would make every
+        label a hit the moment any one of them was visited - the id is part of
+        every payload hostname - turning a single interaction into one
+        confirmed finding per payload family. An export that carries the scan
+        id and no payload hostname is still evidence that something left the
+        target, so it is reported once, as unattributed.
+        """
         if not self.poll_url:
             return []
+        unattributed = False
         for attempt in range(attempts):
             body = ""
             try:
                 body = session.get(self.poll_url, timeout=timeout).text or ""
             except requests.RequestException:
                 pass
+            lowered = body.lower()
             hits = [label for label, host in self.labels.items()
-                    if host in body or self.scan_id in body]
+                    if host.lower() in lowered]
             if hits:
                 return hits
+            unattributed = unattributed or self.scan_id.lower() in lowered
             if attempt < attempts - 1:
                 time.sleep(delay)
-        return []
+        return [self.UNATTRIBUTED] if unattributed else []
 
 def confirm_oob_interactions(oob_manager, session, timeout, tests):
     """Poll the OOB listener and record any confirmed blind interactions."""
@@ -69,6 +87,19 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
     }
     for label in hits:
         owner = by_type.get(label_to_type.get(label, ""), tests[0])
+        if label == OOBManager.UNATTRIBUTED:
+            analysis = (
+                f"An out-of-band interaction carrying this scan's id "
+                f"({oob_manager.scan_id}) was received, so something the scan "
+                f"sent reached a host outside the target. The listener export "
+                f"did not name the payload hostname that caused it, so which "
+                f"payload got out is not identified."
+            )
+        else:
+            analysis = (
+                f"Out-of-band interaction received from the '{label}' payload "
+                f"(scan id {oob_manager.scan_id}); confirms blind SSRF."
+            )
         owner.vulnerabilities_found.append({
             "test_type": OOB_TEST_TYPE,
             "test_result": "Vulnerable",
@@ -80,11 +111,8 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
             "header_name": label,
             "payload": oob_manager.labels.get(label, ""),
             "status_code": "N/A",
-            "analysis": (
-                f"Out-of-band interaction received from the '{label}' payload "
-                f"(scan id {oob_manager.scan_id}); confirms blind SSRF."
-            ),
+            "analysis": analysis,
             "repro": "",
         })
         print(Fore.RED + Style.BRIGHT +
-              f"[!] OOB interaction confirmed for '{label}' payload -> blind SSRF.")
+              f"[!] OOB interaction confirmed ('{label}' payload).")

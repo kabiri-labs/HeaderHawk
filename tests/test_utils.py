@@ -153,5 +153,92 @@ class OOBManagerTests(unittest.TestCase):
         self.assertEqual(manager.poll(Session(), timeout=1, attempts=1), [])
 
 
+
+class OOBAttributionTests(unittest.TestCase):
+    """One interaction must not confirm every payload the scan generated.
+
+    The scan id is part of every payload hostname, so accepting it as a match
+    made a single visit mark every label - and ``confirm_oob_interactions``
+    then filed one High, confirmed finding per label from one interaction.
+    """
+
+    @staticmethod
+    def _session(body):
+        from tests.helpers import FakeResponse
+
+        class Session:
+            def get(self, url, timeout=None):
+                return FakeResponse(text=body)
+
+        return Session()
+
+    @staticmethod
+    def _manager():
+        manager = hhs.OOBManager("oob.example.com",
+                                 poll_url="http://listener/export")
+        hosts = {label: manager.host(label)
+                 for label in ("ssrf", "param", "redirect")}
+        return manager, hosts
+
+    def test_only_the_label_whose_host_was_seen_is_a_hit(self):
+        manager, hosts = self._manager()
+        session = self._session(f"GET / from {hosts['ssrf']}")
+        self.assertEqual(manager.poll(session, timeout=1), ["ssrf"])
+
+    def test_a_host_is_matched_whatever_case_the_listener_logged_it_in(self):
+        manager, hosts = self._manager()
+        session = self._session(hosts["param"].upper())
+        self.assertEqual(manager.poll(session, timeout=1), ["param"])
+
+    def test_an_interaction_with_no_hostname_is_reported_once(self):
+        # Still evidence that something left the target, but not evidence of
+        # which payload did, so it is one finding rather than one per label.
+        manager, _ = self._manager()
+        session = self._session(f"a visit tagged {manager.scan_id} arrived")
+        self.assertEqual(manager.poll(session, timeout=1, attempts=1),
+                         [hhs.OOBManager.UNATTRIBUTED])
+
+
+class OOBConfirmationTests(unittest.TestCase):
+
+    class _Owner:
+        """The attributes ``confirm_oob_interactions`` touches on a check."""
+
+        def __init__(self, test_type="SSRF"):
+            self.test_type = test_type
+            self.target_url = "http://t/"
+            self.vulnerabilities_found = []
+
+    def _confirm(self, manager, body, owners):
+        from tests.helpers import FakeResponse
+
+        class Session:
+            def get(self, url, timeout=None):
+                return FakeResponse(text=body)
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            hhs.confirm_oob_interactions(manager, Session(), 1, owners)
+
+    def test_one_interaction_files_one_finding(self):
+        manager = hhs.OOBManager("oob.example.com", poll_url="http://l/export")
+        host = manager.host("ssrf")
+        manager.host("param")
+        manager.host("redirect")
+        owner = self._Owner()
+        self._confirm(manager, f"hit from {host}", [owner])
+        self.assertEqual(len(owner.vulnerabilities_found), 1)
+        self.assertEqual(owner.vulnerabilities_found[0]["header_name"], "ssrf")
+
+    def test_an_unattributed_interaction_says_the_vector_is_unknown(self):
+        manager = hhs.OOBManager("oob.example.com", poll_url="http://l/export")
+        manager.host("ssrf")
+        manager.host("param")
+        owner = self._Owner()
+        self._confirm(manager, f"tagged {manager.scan_id}", [owner])
+        self.assertEqual(len(owner.vulnerabilities_found), 1)
+        self.assertIn("not identified",
+                      owner.vulnerabilities_found[0]["analysis"])
+
+
 if __name__ == "__main__":
     unittest.main()

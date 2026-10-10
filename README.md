@@ -1,9 +1,9 @@
 # HeaderHawk
 
-[![Version](https://img.shields.io/badge/version-2.13.1-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.13.2-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-550%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-566%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -60,7 +60,7 @@ HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a 
 ```markdown
 # HeaderHawk Compliance Evidence
 
-- **Tool:** HeaderHawk 2.13.1
+- **Tool:** HeaderHawk 2.13.2
 - **Target(s):** https://app.example.com/
 - **Scan mode:** unauthenticated
 - **Requests:** 604/604 succeeded (0 failed)
@@ -188,7 +188,7 @@ Proven **vulnerabilities** and missing **posture** controls are counted separate
 | **Web cache deception** | Static-looking suffixes (`.css`, `/nonexistent.js`, `;.css`, …) a router ignores but a CDN keys on |
 | **Access-control bypass** | Internal `Host` / `X-Forwarded-For` / `X-Real-IP` / `True-Client-IP` values against 401/403 endpoints, plus the `X-Original-URL` / `X-Rewrite-URL` path-override family |
 | **SSRF via routing headers** | Routing headers pointed at internal hosts and cloud metadata endpoints |
-| **Blind SSRF (out-of-band)** | Per-scan correlation id in payloads, confirmed by polling your listener — interactsh, webhook.site, RequestBin, Burp Collaborator exports, custom sinks |
+| **Blind SSRF (out-of-band)** | Per-scan correlation id in payloads, confirmed by polling your listener — interactsh, webhook.site, RequestBin, Burp Collaborator exports, custom sinks. An interaction is attributed to the payload hostname that caused it, so one visit is one finding; an export naming only the scan id is reported once, as an interaction whose vector could not be identified |
 | **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
 | **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value |
 | **CRLF injection / response splitting** | Percent-encoded, double-encoded and overlong-UTF-8 `CR`/`LF` in parameters, path and decoded headers |
@@ -320,9 +320,11 @@ One run, one aggregated report, one summary, one exit code.
 | ---- | ------- |
 | `0` | Scan completed, nothing gated on was found |
 | `1` | Findings in the classes selected by `--fail-on` |
-| `2` | The scan could not run — bad input, interrupted, or the target was unreachable |
+| `2` | The scan could not run, or could not finish — bad input, an unreachable target, an interrupt, or an unexpected error |
 
-**An unreachable host exits `2`, never `0`.** A pipeline that treats "no findings" as success must not be handed a silent failure.
+**An unreachable host exits `2`, never `0`.** A pipeline that treats "no findings" as success must not be handed a silent failure. For the same reason an unexpected error never exits `1`: that code means findings were reported, and a crash is not a finding.
+
+A single check that fails unexpectedly does not end the run. It is recorded as a check that did not assess its controls — so the requirements it covers read *not assessed*, with the reason — the remaining checks still run, and both report files are still written.
 
 ### Fail on regressions, not forever
 
@@ -475,7 +477,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 550 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 566 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.
