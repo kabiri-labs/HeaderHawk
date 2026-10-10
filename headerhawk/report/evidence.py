@@ -6,6 +6,7 @@ from ..compliance.evidence import (STATUS_NOT_ASSESSED, STATUS_ORDER,
                                    STATUS_PASS, build_evidence,
                                    unmapped_findings)
 from ..core.auth import NOT_CONFIGURED, UNVERIFIED
+from ..core.findings import confidence_of
 
 _STATUS_MARK = {"Fail": "FAIL", "Not assessed": "NOT ASSESSED", "Pass": "PASS"}
 
@@ -15,7 +16,10 @@ def _finding_line(finding):
     test_type = finding.get("test_type", "Finding")
     subject = finding.get("header_name") or finding.get("param_name") or ""
     where = finding.get("url", "")
-    parts = [f"  - **[{severity}] {test_type}**"]
+    # The confidence rides in the same bracket as the severity: an assessor
+    # reading the evidence has to be able to tell what was proved from what was
+    # observed once, without opening the analysis.
+    parts = [f"  - **[{severity}, {confidence_of(finding)}] {test_type}**"]
     if subject:
         parts.append(f" (`{subject}`)")
     parts.append(f" — {where}")

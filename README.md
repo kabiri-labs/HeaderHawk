@@ -1,9 +1,9 @@
 # HeaderHawk
 
-[![Version](https://img.shields.io/badge/version-2.13.2-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.14.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-566%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-587%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -60,7 +60,7 @@ HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a 
 ```markdown
 # HeaderHawk Compliance Evidence
 
-- **Tool:** HeaderHawk 2.13.2
+- **Tool:** HeaderHawk 2.14.0
 - **Target(s):** https://app.example.com/
 - **Scan mode:** unauthenticated
 - **Requests:** 604/604 succeeded (0 failed)
@@ -87,7 +87,7 @@ Every control is then listed with its framework, the requirement text transcribe
 - **Source:** https://github.com/OWASP/ASVS/blob/master/5.0/en/0x22-V13-Configuration.md
 - **Assessed by:** Response Header Posture
 - **Evidence:** 1 finding(s)
-  - **[Low] Version Disclosure** — https://app.example.com/
+  - **[Low, confirmed] Version Disclosure** — https://app.example.com/
     - Response header field(s) expose a component version: Server: nginx/1.18.0
     - Reproduce: `curl -s -i 'https://app.example.com/'`
 
@@ -112,7 +112,7 @@ Every control is then listed with its framework, the requirement text transcribe
 ### Findings you can act on
 
 ```
-[!] Host Header Injection Finding! [Medium]
+[!] Host Header Injection Finding! [Medium, suspected]
 URL: https://app.example.com/
 Method: GET
 Header: X-Forwarded-Host
@@ -122,7 +122,7 @@ Analysis: Injected host reflected in 'Location' header: https://297aa83e0c90.exa
 Reproduce: curl -s -i -H 'X-Forwarded-Host: 297aa83e0c90.example-collab.com' 'https://app.example.com/'
 ```
 
-Every finding carries a severity, the requirements it is evidence against, and a **copy-paste command that reproduces it** — `curl` for header and parameter issues, a `printf | ncat` or `openssl s_client` wire-level command for the raw-socket bypasses that curl cannot express.
+Every finding carries a severity, how well it is evidenced, the requirements it is evidence against, and a **copy-paste command that reproduces it** — `curl` for header and parameter issues, a `printf | ncat` or `openssl s_client` wire-level command for the raw-socket bypasses that curl cannot express.
 
 The run ends with a summary that always states coverage and reachability, so a quiet result can be read correctly:
 
@@ -132,11 +132,12 @@ Targets scanned: 1/1
 Scan mode: unauthenticated
 Requests: 604/604 succeeded (0 failed).
 Total findings: 14 (5 vulnerability, 9 posture)
+Evidence: 6 confirmed, 8 suspected
 ```
 
 ### Reports in the format your tooling already reads
 
-`--output` picks the format from the extension: **`.json`** for pipelines, **`.md`** for humans, **`.sarif`** for GitHub code scanning and security dashboards — with per-rule `security-severity` scores, stable fingerprints so alerts do not churn, and the mapped requirement in the rule help text.
+`--output` picks the format from the extension: **`.json`** for pipelines, **`.md`** for humans, **`.sarif`** for GitHub code scanning and security dashboards — with per-rule `security-severity` scores, the confidence the finding carries, fingerprints that survive the per-scan marker so alerts deduplicate instead of reopening, and the mapped requirement in the rule help text.
 
 ---
 
@@ -148,7 +149,7 @@ A header scanner earns its place by what it refuses to report. These are the rul
 
 | Class | What counts as proof |
 | ----- | -------------------- |
-| **Host header injection** | A unique per-request marker comes back in the body, in `Location`, or in any response header. A guessable value would not distinguish reflection from coincidence. |
+| **Host header injection** | A unique per-request marker comes back in the body, in `Location`, or in any response header. A guessable value would not distinguish reflection from coincidence. Nothing re-tests the reflection yet, so these findings are reported as `suspected` rather than as proof. |
 | **Web cache poisoning** | The poisoning request is sent through an unkeyed header, then the same URL is requested **without it**. Only a marker that survives into the second response — served from cache — is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context. |
 | **Web cache deception** | A page still served under a `.css` suffix is half of it. The same URL is then requested by a session carrying **no cookies and no authorization**; content only the logged-in session should have seen, coming back to an anonymous one, is a shared cache handing one user's page to another. A response that already says `no-store` or `private` is not reported at all — that control is working. |
 | **CRLF injection** | The injected header field is *named* after a unique per-scan marker, so a field carrying it cannot have come from anywhere else. A value merely echoed into `Location` is not reported. |
@@ -170,6 +171,10 @@ Five static-looking suffixes that all work are one defect with one fix, so they 
 ### Findings split by class, so the gate stays useful
 
 Proven **vulnerabilities** and missing **posture** controls are counted separately, and `--fail-on` decides which gate the exit code. Turning on posture reporting does not turn an existing pipeline red.
+
+### Every finding says how well it is evidenced
+
+Alongside its class, each finding carries a confidence: **`confirmed`** when the scanner reproduced it — a marker that survived a clean re-request, an out-of-band interaction its own listener recorded, a difference that held on a second probe — **`suspected`** when one observation supports it and nothing re-tested it, and **`informational`** for context that is worth printing and is never worth failing a build over. It appears on the console, in every report format and beside the severity in the evidence report, so a reader can tell proof from observation without reading the analysis. `informational` never gates the exit code; `--fail-on` otherwise behaves exactly as before.
 
 ---
 
@@ -339,7 +344,7 @@ python headerhawk.py https://app.example.com --baseline baseline.json \
 
 `--baseline` reports `N new, N fixed, N unchanged`. `--fail-on-new` narrows the gate to the new ones, so a team that has accepted its current findings gets a pipeline that fails on a **regression** instead of failing permanently — which is the difference between a gate that stays on and one that gets deleted.
 
-A finding keeps the same identity between runs even though several checks put a fresh random marker in every payload: marker-shaped tokens are folded out before matching. Without that, every finding would look new on every run.
+A finding keeps the same identity between runs even though several checks put a fresh random marker in every payload: marker-shaped tokens are folded out before matching. Without that, every finding would look new on every run. The SARIF fingerprint is that same identity, so an alert `--baseline` calls unchanged is not a fresh alert on the dashboard.
 
 ### PCI DSS 4.0.1 requirement 11.6.1
 
@@ -477,7 +482,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 566 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 587 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.

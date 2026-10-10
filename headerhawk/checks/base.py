@@ -7,7 +7,7 @@ from colorama import Fore, Style
 from tqdm import tqdm
 
 from ..compliance import controls_for
-from ..core.findings import DEFAULT_FINDING_CLASS
+from ..core.findings import DEFAULT_FINDING_CLASS, confidence_for
 from ..core.request_file import redact_credentials
 from ..core.scope import SCOPE_ENDPOINT
 from ..core.severity import severity_for
@@ -157,6 +157,12 @@ class BaseTest:
         entry.setdefault("severity", severity_for(entry["test_type"]))
         entry.setdefault("controls", list(controls_for(entry["test_type"])))
         entry.setdefault("finding_class", self.finding_class)
+        # Derived from the result the check set, unless the check named a
+        # confidence itself. A check that proves something past a second probe
+        # says so by passing it.
+        entry.setdefault("confidence",
+                         confidence_for(entry["finding_class"],
+                                        entry["test_result"]))
         if entry.get("raw_request"):
             # The wire request is stored as evidence and reaches every report
             # format. A credential is never part of the evidence, so it is
@@ -170,7 +176,8 @@ class BaseTest:
 
     def _print_finding(self, entry):
         print(Fore.RED + Style.BRIGHT +
-              f"\n[!] {entry['test_type']} Finding! [{entry.get('severity', '')}]")
+              f"\n[!] {entry['test_type']} Finding! "
+              f"[{entry.get('severity', '')}, {entry.get('confidence', '')}]")
         print(f"URL: {entry.get('url')}")
         print(f"Method: {entry.get('method')}")
         if entry.get("header_name"):
