@@ -209,6 +209,37 @@ def load_targets(args):
     return [args.url]
 
 
+def run_check(test):
+    """Run one check, keeping an unexpected failure inside that check.
+
+    Every check shares a process with the others and with the report writers,
+    and a scan is a long sequence of them. A check that raises takes the whole
+    run down with it: the findings every earlier check reported are lost, no
+    report and no evidence file are written, and the traceback exits with the
+    code that tells a pipeline findings *were* reported. None of that is honest
+    about what happened, so an unexpected failure is contained here and recorded
+    the way the evidence report already describes a check that could not finish.
+
+    The reason stored on the check names the exception type and nothing more. It
+    is published in the evidence report, and an exception message can carry a
+    local path or a fragment of a response body; the operator gets the full
+    message on the console, where it is theirs to read.
+    """
+    try:
+        test.run()
+    except Exception as exc:
+        # Deliberately broad: anything a check can raise is either a defect in
+        # the check or an unforeseen shape of response, and neither is a reason
+        # to throw away the rest of the scan. KeyboardInterrupt is not an
+        # ``Exception`` and still stops the run, as it should.
+        test.skip(f"the check stopped on an unexpected {type(exc).__name__} "
+                  f"before it could finish")
+        print(Fore.RED + Style.BRIGHT +
+              f"\n[!] {getattr(test, 'test_type', type(test).__name__)} stopped "
+              f"on an unexpected error and was skipped: "
+              f"{type(exc).__name__}: {exc}")
+
+
 def scan_target(url, args, session, methods, wordlist, stats,
                 rate_limiter=None, primary=True, request_spec=None):
     """Run every test against a single URL and return the test objects.
@@ -237,7 +268,7 @@ def scan_target(url, args, session, methods, wordlist, stats,
     tests = [check(url, hostname, **common)
              for check in CHECKS if runs_on(check, primary)]
     for test in tests:
-        test.run()
+        run_check(test)
     if oob_manager and oob_manager.poll_url:
         status("\nPolling OOB listener for interactions...")
         confirm_oob_interactions(oob_manager, session, args.timeout, tests)
@@ -292,7 +323,7 @@ def resolve_drift(args, all_tests):
     return compare(collect_findings(all_tests), baseline)
 
 
-def main():
+def run_scan():
     args = parse_arguments()
 
     # Resolve quiet mode before anything is printed so status output, colour
@@ -420,3 +451,24 @@ def main():
                          if drift is not None and args.fail_on_new else None),
         identity_of=finding_identity)
     return determine_exit_code(gated, stats)
+
+
+def main():
+    """Entry point: run a scan, and never exit with a lie about why.
+
+    An unhandled exception would leave the process with status 1 - the code that
+    means "the scan completed and reported findings" - and print a traceback
+    carrying local paths. A crash is neither of those things, so it is reported
+    in one line and gated as an error instead.
+    """
+    try:
+        return run_scan()
+    except KeyboardInterrupt:
+        print(Fore.YELLOW + "\n[!] Program interrupted by user.")
+        return EXIT_ERROR
+    except Exception as exc:
+        print(Fore.RED + Style.BRIGHT +
+              f"\n[!] The scan stopped on an unexpected "
+              f"{type(exc).__name__}: {exc}")
+        print(Fore.YELLOW + "[!] No scan outcome can be reported from this run.")
+        return EXIT_ERROR

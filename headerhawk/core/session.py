@@ -32,11 +32,21 @@ class _Session(requests.Session):
 def build_session(timeout, threads, insecure, proxy, extra_headers):
     """Create a connection-pooled, retry-aware requests session."""
     session = _Session()
+    # Only a failed connection is retried. A retry driven by the response
+    # *status* is issued inside urllib3, below both the rate limiter and the
+    # request counter, so one logical request becomes up to three on the wire:
+    # a scan would emit several times the rate the operator asked for, report a
+    # fraction of the traffic it actually sent, and - because the retries and
+    # their backoff fall inside the measured elapsed time - hand the
+    # timing-based checks a delay the target never caused. Retrying 429 is the
+    # worst of the set: it answers "slow down" by sending more.
     retry = Retry(
-        total=2,
+        total=1,
+        connect=1,
+        read=0,
+        status=0,
         backoff_factor=0.3,
-        status_forcelist=(429, 500, 502, 503, 504),
-        allowed_methods=None,  # retry on every method
+        allowed_methods=None,  # applies to every method
         raise_on_status=False,
     )
     adapter = HTTPAdapter(
