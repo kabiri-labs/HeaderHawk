@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-2.13.2-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-565%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-566%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -477,7 +477,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 565 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 566 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.

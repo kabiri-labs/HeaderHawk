@@ -40,11 +40,20 @@ def build_session(timeout, threads, insecure, proxy, extra_headers):
     # their backoff fall inside the measured elapsed time - hand the
     # timing-based checks a delay the target never caused. Retrying 429 is the
     # worst of the set: it answers "slow down" by sending more.
+    #
+    # Every counter is named, ``other`` included. urllib3 leaves that one unset
+    # by default, an unset counter is never decremented, and ``is_exhausted``
+    # only looks for a counter that has gone negative - so an error it files as
+    # neither connect nor read, a TLS error for instance, would still be
+    # retried once however the others are set. Its own documentation warns that
+    # those errors can happen after the request was sent, which is exactly the
+    # duplicate this policy exists to prevent.
     retry = Retry(
         total=1,
         connect=1,
         read=0,
         status=0,
+        other=0,
         backoff_factor=0.3,
         allowed_methods=None,  # applies to every method
         raise_on_status=False,

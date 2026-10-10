@@ -257,6 +257,19 @@ class RetryPolicyTests(unittest.TestCase):
         self.assertFalse(retry.status_forcelist)
         self.assertEqual(retry.read, 0)
 
+    def test_an_unclassified_transport_error_is_not_retried(self):
+        # urllib3 files an error that is neither a connect nor a read error -
+        # a TLS error, say - under "other", and its documentation warns the
+        # error can arrive after the request was sent. Left unset, that counter
+        # is never decremented and nothing ever goes negative, so one retry
+        # stays allowed however the other counters are set.
+        from urllib3.exceptions import MaxRetryError, SSLError
+
+        self.assertEqual(self._retry().other, 0)
+        with self.assertRaises(MaxRetryError):
+            self._retry().increment(method="GET", url="/",
+                                    error=SSLError("handshake failed"))
+
     def test_a_failed_connection_is_still_retried_once(self):
         self.assertEqual(self._retry().connect, 1)
 
