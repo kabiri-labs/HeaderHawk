@@ -10,6 +10,8 @@ existing pipeline red: the exit code gates on vulnerabilities unless the caller
 asks for more. ``--fail-on`` is that ask.
 """
 
+from .severity import severity_rank
+
 CLASS_VULNERABILITY = "vulnerability"
 CLASS_POSTURE = "posture"
 
@@ -81,6 +83,44 @@ def confidence_of(finding):
                               finding.get("test_result", "")))
 
 
+# The quietest band an operator is shown by default. Response-header posture
+# has a long tail of controls that almost no site sets - and that almost no
+# site is meaningfully worse off for not setting. Reporting each of them as a
+# finding on every route is how a report stops being read, so the tail is
+# written to the evidence report, which is the complete record, and kept out of
+# the operator's working view unless they ask for it.
+DEFAULT_MIN_SEVERITY = "medium"
+
+
+def reportable(finding, min_severity=DEFAULT_MIN_SEVERITY):
+    """Whether a finding is at or above the band the operator asked to see.
+
+    The threshold applies to posture findings only. A proven vulnerability is
+    never noise whatever band it carries: a confirmed internal hostname is
+    filed as Low, and an operator who asked to be shown less did not mean that.
+    """
+    if finding_class_of(finding) != CLASS_POSTURE:
+        return True
+    return (severity_rank(finding.get("severity"))
+            >= severity_rank(min_severity))
+
+
+def reportable_findings(tests, min_severity=DEFAULT_MIN_SEVERITY):
+    """Every finding a report at this threshold should list, in scan order."""
+    return [finding
+            for test in tests
+            for finding in test.vulnerabilities_found
+            if reportable(finding, min_severity)]
+
+
+def suppressed_count(tests, min_severity=DEFAULT_MIN_SEVERITY):
+    """How many findings the threshold is keeping out of the operator's view."""
+    return sum(1
+               for test in tests
+               for finding in test.vulnerabilities_found
+               if not reportable(finding, min_severity))
+
+
 def count_by_confidence(tests):
     """Tally findings per confidence across every test object."""
     counts = {name: 0 for name in CONFIDENCE_ORDER}
@@ -102,7 +142,8 @@ def count_by_class(tests):
 
 
 def gated_finding_count(tests, fail_on=DEFAULT_FAIL_ON, only_identities=None,
-                        identity_of=None):
+                        identity_of=None,
+                        min_severity=DEFAULT_MIN_SEVERITY):
     """Count only the findings the chosen --fail-on setting should gate on.
 
     ``only_identities`` narrows that further to a specific set - used by
@@ -123,6 +164,11 @@ def gated_finding_count(tests, fail_on=DEFAULT_FAIL_ON, only_identities=None,
             if confidence_of(finding) == CONFIDENCE_INFORMATIONAL:
                 # Context for the operator, never a gate. Nothing emits this
                 # confidence yet, so no existing pipeline changes colour.
+                continue
+            if not reportable(finding, min_severity):
+                # A finding the operator is not being shown must not fail their
+                # build either: an exit code with nothing printed to explain it
+                # is worse than a quiet report.
                 continue
             if only_identities is not None:
                 if identity_of is None or identity_of(finding) not in only_identities:

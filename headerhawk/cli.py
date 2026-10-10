@@ -13,7 +13,9 @@ from .core.auth import (FAILED, NOT_CONFIGURED, AuthConfig,
 from .core.baseline import (collect_findings, compare, finding_identity,
                             load_baseline)
 from .core.exitcodes import EXIT_ERROR, determine_exit_code
-from .core.findings import DEFAULT_FAIL_ON, FAIL_ON_CLASSES, gated_finding_count
+from .core.findings import (DEFAULT_FAIL_ON, DEFAULT_MIN_SEVERITY,
+                            FAIL_ON_CLASSES, gated_finding_count)
+from .core.severity import SEVERITY_RANK
 from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import is_quiet, print_summary, resolve_quiet, set_quiet, status
 from .core.ratelimit import RateLimiter
@@ -141,6 +143,15 @@ def parse_arguments():
                              "'vuln' (default) counts proven vulnerabilities, "
                              "'posture' counts missing response-header controls, "
                              "'any' counts both, 'none' never fails on findings")
+    parser.add_argument("--min-severity", dest="min_severity",
+                        choices=sorted(SEVERITY_RANK, key=SEVERITY_RANK.get),
+                        default=DEFAULT_MIN_SEVERITY,
+                        help=f"Quietest response-header posture finding to "
+                             f"report and to gate on (default "
+                             f"{DEFAULT_MIN_SEVERITY}). The compliance "
+                             f"evidence report always lists every one of "
+                             f"them, and a proven vulnerability is reported "
+                             f"at any severity")
     parser.add_argument("--output", "-o",
                         help="Output file (.json, .sarif or .md)")
     parser.add_argument("--evidence",
@@ -261,7 +272,8 @@ def scan_target(url, args, session, methods, wordlist, stats,
                   threads=args.threads, verbose=args.verbose, timeout=args.timeout,
                   oob_manager=oob_manager, wordlist=wordlist, insecure=args.insecure,
                   stats=stats, quiet=is_quiet(), rate_limiter=rate_limiter,
-                  enable_desync=args.enable_desync, request_spec=request_spec)
+                  enable_desync=args.enable_desync, request_spec=request_spec,
+                  min_severity=args.min_severity)
     # Host-level checks run against the requested target only; every other URL
     # in the scan is another route on the same host, and repeating them there
     # would issue identical requests and file identical findings.
@@ -417,7 +429,8 @@ def run_scan():
                 all_tests.extend(tests)
     except KeyboardInterrupt:
         print(Fore.YELLOW + "\n[!] Program interrupted by user.")
-        save_results(args.output, all_tests, args.verbose)
+        save_results(args.output, all_tests, args.verbose,
+                     min_severity=args.min_severity)
         save_evidence(args.evidence, all_tests, targets, stats=stats,
                       version=__version__, tool_name=__tool_name__,
                       drift=resolve_drift(args, all_tests))
@@ -437,19 +450,21 @@ def run_scan():
             auth = recheck
 
     drift = resolve_drift(args, all_tests)
-    save_results(args.output, all_tests, args.verbose)
+    save_results(args.output, all_tests, args.verbose,
+                 min_severity=args.min_severity)
     save_evidence(args.evidence, all_tests, targets, stats=stats,
                   version=__version__, tool_name=__tool_name__, drift=drift,
                   scan_mode=auth.state)
     print_summary(all_tests, targets, stats, drift=drift,
-                  scan_mode=auth.state)
+                  scan_mode=auth.state, min_severity=args.min_severity)
     # The exit code gates on the classes the caller asked for, so adding posture
     # checks does not turn an existing pipeline red on its own.
     gated = gated_finding_count(
         all_tests, args.fail_on,
         only_identities=(drift["new_identities"]
                          if drift is not None and args.fail_on_new else None),
-        identity_of=finding_identity)
+        identity_of=finding_identity,
+        min_severity=args.min_severity)
     return determine_exit_code(gated, stats)
 
 

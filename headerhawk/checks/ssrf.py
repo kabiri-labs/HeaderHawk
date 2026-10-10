@@ -6,9 +6,22 @@ import time
 
 from colorama import Fore
 
+from ..core.findings import CONFIDENCE_CONFIRMED, CONFIDENCE_SUSPECTED
 from ..core.output import status
 from ..core.scope import SCOPE_HOST
 from .base import BaseTest
+
+# What a finding says about itself when the evidence is a hint rather than
+# content only an internal target could have returned. The same stance the
+# smuggling check takes towards a timing hit: report it, and say what it is.
+WEAK_EVIDENCE_NOTE = (
+    "This rests on indirect evidence - an internal error string, a response "
+    "that changed, a reply that took longer - not on content only an internal "
+    "target would return. A slow response alone is never reported here, "
+    "because a slow target is the likelier explanation. To settle it, re-run "
+    "with --oob <your-domain> --oob-poll-url <export-url>: an interaction "
+    "arriving at your own listener is proof that the request left the target."
+)
 
 
 class SSRFTest(BaseTest):
@@ -32,6 +45,13 @@ class SSRFTest(BaseTest):
         "X-Served-By", "X-Timer", "X-Cache", "X-Cache-Hits", "X-Runtime",
         "Report-To", "NEL", "Keep-Alive", "X-Powered-By-Nonce", "CF-Cache-Status",
     })
+    # An indicator at or above this weight is content only an internal target
+    # would have returned, which is what makes a finding proof rather than a
+    # hint. Everything below it - a connection error string, a changed header,
+    # a slower reply - is a hint, and hints are reported as suspected however
+    # many of them line up.
+    PROOF_WEIGHT = 4
+
     # Indicators that strongly suggest the request reached an internal target.
     INDICATORS = {
         "root:x:0:0:": 5,
@@ -174,17 +194,25 @@ class SSRFTest(BaseTest):
             notes = []
 
             if result["response_time"] > upper_threshold and result["response_time"] > (self.typical_delay or 0) * 2:
-                score += 2
+                # Deliberately below the recording threshold, and so is a
+                # header anomaly: the two together must not add up to a
+                # finding. A slow reply and a changed response id are what a
+                # target under load looks like, and reporting that as SSRF at
+                # High is the fastest way to teach an operator to ignore the
+                # tool.
+                score += 1
                 notes.append(
                     f"Response time {result['response_time']:.2f}s exceeds "
                     f"threshold {upper_threshold:.2f}s."
                 )
 
             body = result["response_body"].lower()
+            strongest = 0
             for indicator, pattern in patterns.items():
                 if pattern.search(body):
                     weight = self.INDICATORS[indicator]
                     score += weight
+                    strongest = max(strongest, weight)
                     notes.append(f"Indicator '{indicator}' (weight {weight}).")
 
             anomalies = self.detect_header_anomalies(result["response_headers"])
@@ -194,6 +222,7 @@ class SSRFTest(BaseTest):
 
             # Require a meaningful score so a lone weak signal does not fire.
             if score >= 3:
+                proved = strongest >= self.PROOF_WEIGHT
                 self.record({
                     "url": result["url"],
                     "method": result["method"],
@@ -203,6 +232,11 @@ class SSRFTest(BaseTest):
                     "status_code": result["status_code"],
                     "response_time": result["response_time"],
                     "analysis": " ".join(notes),
+                    "test_result": ("Vulnerable" if proved
+                                    else "Potentially Vulnerable"),
+                    "confidence": (CONFIDENCE_CONFIRMED if proved
+                                   else CONFIDENCE_SUSPECTED),
+                    "confirmation": None if proved else WEAK_EVIDENCE_NOTE,
                 })
             elif self.verbose == 2:
                 self.all_results.append({

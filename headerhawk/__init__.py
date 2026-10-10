@@ -31,7 +31,8 @@ from .cli import (load_targets, load_wordlist, main, parse_arguments,
 from .compliance import (CONTROLS, CONTROLS_BY_TEST, STATUS_FAIL,
                          STATUS_NOT_ASSESSED, STATUS_PASS, Control,
                          ControlResult, build_evidence,
-                         controls_covered_by, controls_for, describe,
+                         controls_assessed_by, controls_covered_by,
+                         controls_unassessed_by, controls_for, describe,
                          summarise, unmapped_findings)
 from .core.auth import (FAILED, NOT_CONFIGURED, UNVERIFIED, VERIFIED,
                         AuthConfig, AuthResult, apply_credentials,
@@ -46,9 +47,11 @@ from .core.exitcodes import (EXIT_ERROR, EXIT_FINDINGS, EXIT_OK,
 from .core.findings import (CLASS_POSTURE, CLASS_VULNERABILITY,
                             CONFIDENCE_CONFIRMED, CONFIDENCE_INFORMATIONAL,
                             CONFIDENCE_ORDER, CONFIDENCE_SUSPECTED,
-                            confidence_for, confidence_of, count_by_class,
+                            DEFAULT_MIN_SEVERITY, confidence_for,
+                            confidence_of, count_by_class,
                             count_by_confidence, finding_class_of,
-                            gated_finding_count)
+                            gated_finding_count, reportable,
+                            reportable_findings, suppressed_count)
 from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import (is_quiet, print_summary, resolve_quiet, set_quiet,
                           status)
@@ -60,7 +63,7 @@ from .core.request_file import (CREDENTIAL_HEADERS, EXCLUDED_HEADERS,
                                 redact_credentials)
 from .core.session import build_session
 from .core.severity import (DEFAULT_SEVERITY, SEVERITY_BY_TEST, SEVERITY_META,
-                            severity_for)
+                            SEVERITY_RANK, severity_for, severity_rank)
 from .core.stats import RequestStats
 from .net.raw import RawHTTPClient, RawResponse, TimedResponse
 from .posture import (RULES, Cookie, Issue, PostureRule, ResponseFacts,
@@ -96,7 +99,8 @@ __all__ = [
     "redact_credentials",
     "CONTROLS", "CONTROLS_BY_TEST", "Control", "ControlResult",
     "STATUS_FAIL", "STATUS_NOT_ASSESSED", "STATUS_PASS",
-    "build_evidence", "controls_covered_by", "controls_for", "describe",
+    "build_evidence", "controls_assessed_by", "controls_covered_by",
+    "controls_unassessed_by", "controls_for", "describe",
     "summarise", "unmapped_findings",
     "save_evidence", "render_markdown", "render_json",
     "EXIT_ERROR", "EXIT_FINDINGS", "EXIT_OK", "determine_exit_code",
@@ -110,7 +114,10 @@ __all__ = [
     "OOBManager", "confirm_oob_interactions",
     "is_quiet", "print_summary", "resolve_quiet", "set_quiet", "status",
     "RateLimiter", "build_session", "RequestStats",
-    "DEFAULT_SEVERITY", "SEVERITY_BY_TEST", "SEVERITY_META", "severity_for",
+    "DEFAULT_SEVERITY", "SEVERITY_BY_TEST", "SEVERITY_META", "SEVERITY_RANK",
+    "severity_for", "severity_rank",
+    "DEFAULT_MIN_SEVERITY", "reportable", "reportable_findings",
+    "suppressed_count",
     "RawHTTPClient", "RawResponse", "TimedResponse",
     "build_reproduction", "build_sarif", "save_results",
 ]

@@ -38,8 +38,8 @@ def directives(policy):
     return parsed
 
 
-def _one(test_result, analysis, subject):
-    return [Issue(test_result, analysis, subject)]
+def _one(test_result, analysis, subject, severity=None):
+    return [Issue(test_result, analysis, subject, severity)]
 
 
 def _hsts(facts):
@@ -165,7 +165,19 @@ def _referrer_policy(facts):
     subject = "Referrer-Policy"
     value = facts.header(subject)
     if not value:
-        return _one("Missing", "No 'Referrer-Policy' response header field.", subject)
+        # Every browser still in support defaults to
+        # strict-origin-when-cross-origin, which already keeps the path and the
+        # query out of a cross-origin referrer. The requirement asks for the
+        # field and it is not there, so this is still reported - but at the band
+        # the exposure actually warrants, not the band the missing header looks
+        # like.
+        return _one("Missing",
+                    "No 'Referrer-Policy' response header field. Every browser "
+                    "still in support defaults to "
+                    "'strict-origin-when-cross-origin', so the path and query "
+                    "are already withheld from a cross-origin referrer; the "
+                    "requirement asks for the field to be set explicitly.",
+                    subject, severity="Info")
     if "unsafe-url" in value.lower():
         return _one("Weak",
                     f"'Referrer-Policy: {value}' sends the full URL to "
@@ -180,10 +192,15 @@ def _frame_protection(facts):
         return []
     xfo = (facts.header("x-frame-options") or "").strip().lower()
     if xfo in ("deny", "sameorigin"):
+        # The requirement names frame-ancestors, so this is reported - but every
+        # browser still in support honours X-Frame-Options, so the document is
+        # not actually embeddable and the practical exposure is nil.
         return _one("Weak",
                     f"Embedding is restricted only by 'X-Frame-Options: {xfo}'; "
                     f"the 'frame-ancestors' Content-Security-Policy directive, "
-                    f"which supersedes it, is not set.", subject)
+                    f"which supersedes it, is not set. Every browser still in "
+                    f"support honours X-Frame-Options, so the document is not "
+                    f"embeddable today.", subject, severity="Info")
     return _one("Missing",
                 "Neither a 'frame-ancestors' Content-Security-Policy directive "
                 "nor a usable 'X-Frame-Options' header field restricts "
@@ -207,10 +224,16 @@ def _coop(facts):
 def _permissions_policy(facts):
     subject = "Permissions-Policy"
     if not facts.header(subject):
+        # ASVS 5.0 carries no requirement for this header, so the finding cites
+        # nothing. A document that uses none of the features it would restrict
+        # is not exposed by its absence either, which is why it is reported for
+        # completeness rather than as a weakness.
         return _one("Missing",
                     "No 'Permissions-Policy' response header field, so powerful "
-                    "browser features are not restricted for this document.",
-                    subject)
+                    "browser features are not restricted for this document. "
+                    "Reported for completeness: no catalogued requirement covers "
+                    "this field.",
+                    subject, severity="Info")
     return []
 
 
@@ -227,17 +250,22 @@ def _version_disclosure(facts):
     return []
 
 
+# The last field marks a rule that only means something for a response a
+# browser renders as a document. Transport security, MIME sniffing, cookies and
+# a leaked version banner apply to every response; framing, referrer, script
+# sources, opener isolation and feature permissions do not exist for a JSON
+# reply, so they are not assessed there rather than being failed there.
 HEADER_RULES = [
-    PostureRule("Strict-Transport-Security", "Medium", _hsts),
-    PostureRule("Content-Security-Policy", "Medium", _csp),
-    PostureRule("CSP Script Sources", "Medium", _csp_script_sources),
-    PostureRule("Frame Protection", "Medium", _frame_protection),
-    PostureRule("X-Content-Type-Options", "Low", _content_type_options),
-    PostureRule("Referrer-Policy", "Low", _referrer_policy),
-    PostureRule("Cross-Origin-Opener-Policy", "Low", _coop),
-    PostureRule("Permissions-Policy", "Low", _permissions_policy),
-    PostureRule("CSP Violation Reporting", "Low", _csp_reporting),
-    PostureRule("Version Disclosure", "Low", _version_disclosure),
+    PostureRule("Strict-Transport-Security", "Medium", _hsts, False),
+    PostureRule("Content-Security-Policy", "Medium", _csp, True),
+    PostureRule("CSP Script Sources", "Medium", _csp_script_sources, True),
+    PostureRule("Frame Protection", "Medium", _frame_protection, True),
+    PostureRule("X-Content-Type-Options", "Low", _content_type_options, False),
+    PostureRule("Referrer-Policy", "Low", _referrer_policy, True),
+    PostureRule("Cross-Origin-Opener-Policy", "Low", _coop, True),
+    PostureRule("Permissions-Policy", "Low", _permissions_policy, True),
+    PostureRule("CSP Violation Reporting", "Low", _csp_reporting, True),
+    PostureRule("Version Disclosure", "Low", _version_disclosure, False),
 ]
 
 RULES = HEADER_RULES + COOKIE_RULES

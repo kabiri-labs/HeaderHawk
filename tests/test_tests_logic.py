@@ -134,6 +134,57 @@ class SSRFLogicTests(unittest.TestCase):
         self.assertEqual(len(test.vulnerabilities_found), 1)
         self.assertIn("root:x:0:0:", test.vulnerabilities_found[0]["analysis"])
 
+    def test_timing_and_a_header_change_do_not_add_up_to_a_finding(self):
+        # A slow reply and a response header that moved are what a target
+        # under load looks like. Reported as SSRF at High, that is the fastest
+        # way to teach an operator to ignore the tool, so neither signal and
+        # not both together can reach the threshold.
+        test = make_test(hhs.SSRFTest, FakeSession())
+        test.typical_delay = 0.1
+        test.stable_baseline_headers = {"Server": "nginx"}
+        fast = {
+            "url": "http://example.com/", "method": "GET",
+            "header_name": "Host", "payload": "127.0.0.1", "status_code": 200,
+            "response_time": 0.1, "response_body": "ok",
+            "response_headers": {"Server": "nginx"},
+        }
+        slow = dict(fast, response_time=5.0,
+                    response_headers={"Server": "nginx", "X-New": "1"})
+        test.results = [dict(fast) for _ in range(20)] + [slow]
+        test.analyze()
+        self.assertEqual(test.vulnerabilities_found, [])
+
+    def test_content_only_an_internal_target_returns_is_confirmed(self):
+        test = make_test(hhs.SSRFTest, FakeSession())
+        test.typical_delay = 0.1
+        test.results = [{
+            "url": "http://example.com/", "method": "GET",
+            "header_name": "Host", "payload": "169.254.169.254",
+            "status_code": 200, "response_time": 0.1,
+            "response_body": "ami-id: i-0abc", "response_headers": {},
+        }]
+        test.analyze()
+        finding = test.vulnerabilities_found[0]
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_CONFIRMED)
+        self.assertEqual(finding["test_result"], "Vulnerable")
+        self.assertFalse(finding.get("confirmation"))
+
+    def test_an_internal_error_string_is_reported_as_suspected(self):
+        # Evidence that something tried to connect somewhere it should not,
+        # which is worth reporting and is not proof of where it got to.
+        test = make_test(hhs.SSRFTest, FakeSession())
+        test.typical_delay = 0.1
+        test.results = [{
+            "url": "http://example.com/", "method": "GET",
+            "header_name": "Host", "payload": "10.0.0.1", "status_code": 500,
+            "response_time": 0.1, "response_body": "no route to host",
+            "response_headers": {},
+        }]
+        test.analyze()
+        finding = test.vulnerabilities_found[0]
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
+        self.assertIn("--oob", finding["confirmation"])
+
     def test_analyze_ignores_low_score(self):
         test = make_test(hhs.SSRFTest, FakeSession())
         test.typical_delay = 0.1

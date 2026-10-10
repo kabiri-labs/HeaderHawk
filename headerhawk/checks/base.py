@@ -7,7 +7,8 @@ from colorama import Fore, Style
 from tqdm import tqdm
 
 from ..compliance import controls_for
-from ..core.findings import DEFAULT_FINDING_CLASS, confidence_for
+from ..core.findings import (DEFAULT_FINDING_CLASS, DEFAULT_MIN_SEVERITY,
+                             confidence_for, reportable)
 from ..core.request_file import redact_credentials
 from ..core.scope import SCOPE_ENDPOINT
 from ..core.severity import severity_for
@@ -42,7 +43,8 @@ class BaseTest:
                  methods=None, threads=5, verbose=1, timeout=10,
                  oob_manager=None, wordlist=None, insecure=False,
                  stats=None, quiet=False, rate_limiter=None,
-                 enable_desync=False, request_spec=None):
+                 enable_desync=False, request_spec=None,
+                 min_severity=DEFAULT_MIN_SEVERITY):
         self.target_url = target_url
         self.original_host = original_host
         self.session = session
@@ -60,6 +62,10 @@ class BaseTest:
         # Only the desync check acts on this; it is accepted here so the CLI
         # can hand every check the same options.
         self.enable_desync = enable_desync
+        # The quietest band to print while the scan runs. Everything is still
+        # recorded: the threshold decides what the operator is shown, and the
+        # evidence report carries the rest.
+        self.min_severity = min_severity
         # The saved request a scan was driven from, when there was one.
         # Its headers already ride on the session; its body has to be
         # replayed here, or a POST endpoint is tested with an empty one.
@@ -71,6 +77,11 @@ class BaseTest:
         # actually obtained usable data.
         self._requests_ok = 0
         self._skip_reason = None
+        # Finding types this check reached but could not judge, as
+        # type -> reason. Distinct from ``skip``, which says the whole check
+        # could not run: a check can assess most of what it covers and still
+        # have to say "not this one, and here is why".
+        self.unassessed = {}
 
     def body_for(self, method):
         """The saved body, when this request is the one the file described.
@@ -109,6 +120,15 @@ class BaseTest:
     def note_response(self):
         """Record a successful exchange made outside ``request`` (raw sockets)."""
         self._requests_ok += 1
+
+    def skip_type(self, test_type, reason):
+        """Record that one finding type this check emits was not judged.
+
+        The reason is printed in the evidence report next to the requirements
+        that type is the evidence for, so a control nobody looked at is never
+        reported as passing.
+        """
+        self.unassessed[test_type] = reason
 
     def skip(self, reason):
         """Record that the check could not complete, and why.
@@ -171,7 +191,7 @@ class BaseTest:
         entry["repro"] = build_reproduction(entry, self.target_url,
                                             self.insecure, self.request_spec)
         self.vulnerabilities_found.append(entry)
-        if self.verbose >= 1:
+        if self.verbose >= 1 and reportable(entry, self.min_severity):
             self._print_finding(entry)
 
     def _print_finding(self, entry):

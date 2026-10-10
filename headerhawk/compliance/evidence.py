@@ -29,13 +29,52 @@ ControlResult = namedtuple(
     "ControlResult", "control status findings assessed_by not_assessed_because")
 
 
+def _emitted_types(check):
+    return check.emitted_types() if hasattr(check, "emitted_types") else ()
+
+
 def controls_covered_by(check):
     """The catalogued controls a check (class or instance) can speak to."""
-    emitted = check.emitted_types() if hasattr(check, "emitted_types") else ()
     covered = set()
-    for test_type in emitted:
+    for test_type in _emitted_types(check):
         covered.update(controls_for(test_type))
     return covered
+
+
+def controls_assessed_by(check):
+    """The controls a check actually judged on this run.
+
+    A check can cover several controls and reach only some of them: response
+    posture assesses framing on an HTML page and has nothing to say about it on
+    a JSON reply. Reading the check as a whole would either claim the framing
+    control passed where nothing looked at it, or throw away the controls that
+    were genuinely assessed alongside it.
+    """
+    unassessed = getattr(check, "unassessed", None) or {}
+    covered = set()
+    for test_type in _emitted_types(check):
+        if test_type in unassessed:
+            continue
+        covered.update(controls_for(test_type))
+    return covered
+
+
+def controls_unassessed_by(check):
+    """The controls a check covers but did not judge, each with its reason.
+
+    A control that another of the check's types did reach is left out: one
+    assessment of a control is enough to have assessed it.
+    """
+    unassessed = getattr(check, "unassessed", None) or {}
+    if not unassessed:
+        return {}
+    assessed = controls_assessed_by(check)
+    blocked = {}
+    for test_type, reason in unassessed.items():
+        for control_id in controls_for(test_type):
+            if control_id not in assessed:
+                blocked.setdefault(control_id, reason)
+    return blocked
 
 
 # The requirement a baseline comparison satisfies. Running the comparison *is*
@@ -63,8 +102,10 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
             continue
         name = getattr(test, "test_type", type(test).__name__)
         if getattr(test, "assessed", False):
-            for control_id in covered:
+            for control_id in controls_assessed_by(test):
                 assessed_by.setdefault(control_id, set()).add(name)
+            for control_id, reason in controls_unassessed_by(test).items():
+                blocked_by.setdefault(control_id, {})[name] = reason
         else:
             reason = getattr(test, "skip_reason", None) or "the check did not run"
             for control_id in covered:

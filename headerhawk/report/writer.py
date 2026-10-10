@@ -4,7 +4,8 @@ import json
 from datetime import datetime
 
 from ..compliance import controls_for, describe, summarise
-from ..core.findings import confidence_of, finding_class_of
+from ..core.findings import (DEFAULT_MIN_SEVERITY, confidence_of,
+                             finding_class_of, reportable, suppressed_count)
 from ..core.severity import DEFAULT_SEVERITY, severity_for
 from .sarif import build_sarif
 
@@ -46,14 +47,23 @@ def _coverage_section(results):
     return lines
 
 
-def save_results(output_file, tests, verbose):
+def save_results(output_file, tests, verbose,
+                 min_severity=DEFAULT_MIN_SEVERITY):
+    """Write the findings report, leaving out what the threshold silences.
+
+    The threshold is the operator's working view, not the record: the
+    compliance evidence report lists every finding whatever band it carries,
+    so narrowing this one loses nothing.
+    """
     if not output_file or not tests:
         return
     extension = output_file.rsplit(".", 1)[-1].lower()
+    suppressed = suppressed_count(tests, min_severity)
     results = []
     for test in tests:
         results.extend(test.all_results if verbose == 2 else [])
-        results.extend(test.vulnerabilities_found)
+        results.extend(finding for finding in test.vulnerabilities_found
+                       if reportable(finding, min_severity))
     # Ensure every result carries a severity and its control mapping so
     # JSON/SARIF/Markdown agree - verbose-2 entries never went through record().
     for result in results:
@@ -75,6 +85,9 @@ def save_results(output_file, tests, verbose):
         print(f"\nSARIF report saved to {output_file}")
         return
 
+    reported = sum(1 for test in tests
+                   for finding in test.vulnerabilities_found
+                   if reportable(finding, min_severity))
     targets = sorted({test.target_url for test in tests})
     target_line = (targets[0] if len(targets) == 1
                    else f"{len(targets)} targets ({', '.join(targets)})")
@@ -82,8 +95,13 @@ def save_results(output_file, tests, verbose):
         "# HeaderHawk Report",
         f"**Target(s):** {target_line}",
         f"**Date:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        f"**Total Findings:** {sum(len(t.vulnerabilities_found) for t in tests)}\n",
+        f"**Total Findings:** {reported}\n",
     ]
+    if suppressed:
+        lines.append(f"_{suppressed} further posture finding(s) sit below "
+                     f"`--min-severity {min_severity}` and are not listed "
+                     f"here. The compliance evidence report carries every "
+                     f"one of them._\n")
     lines.extend(_coverage_section(results))
     if results:
         lines.append("## Test Results\n")

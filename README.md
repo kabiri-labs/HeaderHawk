@@ -1,9 +1,9 @@
 # HeaderHawk
 
-[![Version](https://img.shields.io/badge/version-2.14.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.15.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-588%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-618%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -60,7 +60,7 @@ HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a 
 ```markdown
 # HeaderHawk Compliance Evidence
 
-- **Tool:** HeaderHawk 2.14.0
+- **Tool:** HeaderHawk 2.15.0
 - **Target(s):** https://app.example.com/
 - **Scan mode:** unauthenticated
 - **Requests:** 604/604 succeeded (0 failed)
@@ -133,6 +133,7 @@ Scan mode: unauthenticated
 Requests: 604/604 succeeded (0 failed).
 Total findings: 14 (5 vulnerability, 9 posture)
 Evidence: 6 confirmed, 8 suspected
+Not shown: 4 posture finding(s) below --min-severity medium (the compliance evidence report lists every one)
 ```
 
 ### Reports in the format your tooling already reads
@@ -155,7 +156,7 @@ A header scanner earns its place by what it refuses to report. These are the rul
 | **CRLF injection** | The injected header field is *named* after a unique per-scan marker, so a field carrying it cannot have come from anywhere else. A value merely echoed into `Location` is not reported. |
 | **CORS** | A per-scan origin that cannot exist is sent; only the server echoing it back counts. Severity follows `Access-Control-Allow-Credentials`, because a permissive allowlist that also allows credentials lets an attacker's page read authenticated responses. A bare `*` without credentials — correct for a public endpoint — produces nothing. |
 | **Virtual host discovery** | The default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference survives a second probe. |
-| **SSRF** | Response-time deviation, internal-target indicators and header anomalies are combined behind a weighted threshold. Anomalies are measured only against headers proven stable across baseline samples, so request ids, tracing headers, `CF-RAY` and nonces are learned as volatile and ignored. |
+| **SSRF** | Content only an internal target would return — `ami-id`, an IAM credentials path, `root:x:0:0:` — or an interaction at your own out-of-band listener. **A slow response is never reported as SSRF**, and neither is a slow response plus a changed header: a target under load looks exactly like that. An internal error string is reported as `suspected`, with the flags that would settle it. Header anomalies are measured only against headers proven stable across baseline samples, so request ids, tracing headers, `CF-RAY` and nonces are learned as volatile and ignored. |
 | **Request smuggling** | A hang is reported only after two consecutive probes agree **and** a well-formed request in between still returns normally — which is what separates a desync from a target that merely became slow. |
 
 ### Honest about the limits of its own evidence
@@ -163,6 +164,12 @@ A header scanner earns its place by what it refuses to report. These are the rul
 Timing is evidence, not proof. Every smuggling finding carries a `Confirming this` note stating exactly that, what to run for certainty, and what that costs — printed to the console and included in every report format. Confirming a desync for real is **intrusive**: `--enable-desync` plants a smuggled prefix that can attach to another user's request. It is opt-in, and the warning says why.
 
 The same applies elsewhere: an unconfirmed cache-deception finding tells you it needs an authenticated session to prove, and which flags supply one.
+
+### Assessed only where the control can act
+
+A JSON API reply has no document for a browser to frame, no referrer to withhold, no script to constrain and no opener to isolate. Failing it for a missing `Content-Security-Policy` is noise; **passing** it would be worse. So the document controls — CSP, framing, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, CSP reporting — are assessed only on a response a browser renders as a document, and on anything else they are reported as *not assessed* naming the media type that was returned instead. Transport security, MIME sniffing, cookie attributes and a leaked version banner apply to every response and are assessed everywhere. A response that declares no media type at all is treated as a document, because a browser may sniff one.
+
+This is per control, not per check: one HTML page in the scan is enough to have assessed the document controls, and the API endpoints alongside it no longer file a finding each for them.
 
 ### One defect, one finding
 
@@ -175,6 +182,12 @@ Proven **vulnerabilities** and missing **posture** controls are counted separate
 ### Every finding says how well it is evidenced
 
 Alongside its class, each finding carries a confidence: **`confirmed`** when the scanner reproduced it — a marker that survived a clean re-request, an out-of-band interaction its own listener recorded, a difference that held on a second probe — **`suspected`** when one observation supports it and nothing re-tested it, and **`informational`** for context that is worth printing and is never worth failing a build over. It appears on the console, in every report format and beside the severity in the evidence report, so a reader can tell proof from observation without reading the analysis. `informational` never gates the exit code; `--fail-on` otherwise behaves exactly as before.
+
+### Quiet enough to keep reading
+
+Response-header posture has a long tail of controls that almost no site sets and that almost no site is meaningfully worse off for not setting. Reported on every route, every run, they are how a report stops being read. So `--min-severity` (default **`medium`**) decides the quietest posture finding the console, the findings report and the exit code take account of — and the run says how many it is not showing, so it is never silent about its own silence. **The compliance evidence report always carries every one of them**, because a requirement that is unmet has to appear in the document an assessor reads.
+
+The threshold applies to posture only. A proven vulnerability is reported at any band: a confirmed internal hostname is filed as `Low`, and an operator who asked for less noise did not ask for that. Three bands were recalibrated to match their real stakes rather than their appearance — a missing `Referrer-Policy` (every current browser already withholds the path and query cross-origin), a missing `Permissions-Policy` (no catalogued requirement covers it), and framing restricted only by `X-Frame-Options` (honoured by every browser still in support). Each is still reported, and each still fails its requirement in the evidence report; none of them now reads as something to fix today.
 
 ---
 
@@ -215,7 +228,7 @@ Alongside its class, each finding carries a confidence: **`confirmed`** when the
 
 **PCI DSS 4.0.1** — requirement 11.6.1, satisfied by running with `--baseline`. See [In your pipeline](#in-your-pipeline).
 
-Control ids are transcribed from the published standard and each links to the chapter it came from. **A finding type with no genuinely matching requirement is reported as unmapped rather than attached to an approximate one** — an id that does not hold up under review is worse than an empty column. `Permissions-Policy` is the current example: ASVS 5.0 has no requirement for it, so it is reported without one.
+Control ids are transcribed from the published standard and each links to the chapter it came from. **A finding type with no genuinely matching requirement is reported as unmapped rather than attached to an approximate one** — an id that does not hold up under review is worse than an empty column. `Permissions-Policy` is the current example: ASVS 5.0 has no requirement for it, so it is reported without one — at `Info`, below the default reporting threshold.
 
 ---
 
@@ -423,6 +436,7 @@ python headerhawk.py https://example.com
 | `--baseline <file>` | A previous scan's JSON; findings reported as new, fixed or unchanged |
 | `--fail-on-new` | Gate the exit code on findings absent from `--baseline`. Requires `--baseline` |
 | `--fail-on {vuln,posture,any,none}` | Which classes make the process exit `1` (default `vuln`) |
+| `--min-severity {info,low,medium,high,critical}` | Quietest posture finding to report and to gate on (default `medium`). The evidence report always lists every one; proven vulnerabilities are reported at any severity |
 | `--verbose {1,2}` | Level 2 also records non-findings for the report |
 | `--quiet`, `-q` | Strip progress bars and colour. Auto-enabled when stdout is not a TTY |
 
@@ -482,7 +496,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 588 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 618 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.
