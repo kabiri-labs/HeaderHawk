@@ -44,7 +44,10 @@ from .core.baseline import (collect_findings, compare, describe_drift,
 from .core.exitcodes import (EXIT_ERROR, EXIT_FINDINGS, EXIT_OK,
                              determine_exit_code)
 from .core.findings import (CLASS_POSTURE, CLASS_VULNERABILITY,
-                            count_by_class, finding_class_of,
+                            CONFIDENCE_CONFIRMED, CONFIDENCE_INFORMATIONAL,
+                            CONFIDENCE_ORDER, CONFIDENCE_SUSPECTED,
+                            confidence_for, confidence_of, count_by_class,
+                            count_by_confidence, finding_class_of,
                             gated_finding_count)
 from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import (is_quiet, print_summary, resolve_quiet, set_quiet,
@@ -80,6 +83,9 @@ __all__ = [
     "Cookie", "ResponseFacts", "parse_set_cookie", "set_cookie_values",
     "CLASS_POSTURE", "CLASS_VULNERABILITY", "count_by_class",
     "finding_class_of", "gated_finding_count",
+    "CONFIDENCE_CONFIRMED", "CONFIDENCE_INFORMATIONAL", "CONFIDENCE_ORDER",
+    "CONFIDENCE_SUSPECTED", "confidence_for", "confidence_of",
+    "count_by_confidence",
     "CACHE_STATUS_HEADERS", "DEFAULT_VHOST_WORDLIST", "HOST_HEADERS",
     "PATH_OVERRIDE_HEADERS", "UNKEYED_HOST_HEADERS", "INTERMEDIARY_HEADERS",
     "load_targets", "load_wordlist", "main", "parse_arguments",

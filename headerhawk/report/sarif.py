@@ -1,11 +1,11 @@
 """SARIF 2.1.0 rendering of the collected findings."""
 
-import hashlib
 import re
 
 from .._meta import __github_url__, __tool_name__, __version__
 from ..compliance import controls_for, describe
-from ..core.findings import finding_class_of
+from ..core.baseline import finding_identity
+from ..core.findings import confidence_of, finding_class_of
 from ..core.severity import DEFAULT_SEVERITY, SEVERITY_META, severity_for
 
 
@@ -27,12 +27,6 @@ def _control_help(control_ids):
 def _rule_id(test_type):
     """Turn a human test-type name into a stable SARIF rule id slug."""
     return re.sub(r"[^a-z0-9]+", "-", test_type.lower()).strip("-") or "finding"
-
-
-def _fingerprint(*parts):
-    """Stable fingerprint so a platform can de-duplicate recurring findings."""
-    raw = "|".join(str(part) for part in parts)
-    return hashlib.sha1(raw.encode("utf-8", "ignore")).hexdigest()
 
 
 def build_sarif(results, version=None):
@@ -82,11 +76,34 @@ def build_sarif(results, version=None):
                 "status_code": result.get("status_code", ""),
                 "controls": list(control_ids),
                 "finding_class": finding_class_of(result),
+                "confidence": confidence_of(result),
                 "confirmation": result.get("confirmation", ""),
             },
             "partialFingerprints": {
-                "hostHeaderScanner/v1": _fingerprint(
-                    test_type, header_or_param, result.get("payload", ""), location),
+                # The same identity ``--baseline`` matches on, which folds the
+                # marker-shaped tokens out first. Hashing the payload and URL
+                # verbatim - as v1 did - put a fresh per-scan marker and
+                # cache-buster into every fingerprint, so a platform saw a new
+                # alert on every run and the alerts this is meant to
+                # de-duplicate reopened instead. The key is versioned
+                # because the algorithm changed, and re-keying costs one
+                # transition: alerts a platform already holds under v1 do not
+                # match a v2 fingerprint, so they close and reopen once - and
+                # then stop churning, which is the point.
+                #
+                # The folding is by shape, not by provenance, so it cannot tell
+                # a generated marker from a hexadecimal value that means
+                # something: two virtual hosts from a custom wordlist of hex
+                # names file under one fingerprint, where the old algorithm
+                # kept them apart. Both findings still appear in full in every
+                # report - it is the dashboard's grouping that merges them -
+                # and the alternative is worse. Narrowing the fold would mean
+                # changing the identity ``--baseline`` matches on, which would
+                # make every finding a team has already accepted look new. The
+                # fix is to make the markers recognisable rather than to guess
+                # at them, which is a change to the checks, not to this
+                # writer.
+                "hostHeaderScanner/v2": finding_identity(result),
             },
         }
         if location:

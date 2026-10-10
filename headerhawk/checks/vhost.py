@@ -112,6 +112,10 @@ class VhostDiscoveryTest(BaseTest):
             signal = self._distinct_signal(first, second)
             if signal:
                 self.record({
+                    # The difference survived a second probe, which is this
+                    # check's own definition of proof, so the finding says so
+                    # rather than leaving the default "potentially".
+                    "test_result": "Vulnerable",
                     "url": self.target_url,
                     "method": "GET",
                     "header_name": "Host",

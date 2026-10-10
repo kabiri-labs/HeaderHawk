@@ -3,7 +3,8 @@
 from colorama import Fore, Style
 
 from .baseline import describe_drift
-from .findings import CLASS_POSTURE, CLASS_VULNERABILITY, count_by_class
+from .findings import (CLASS_POSTURE, CLASS_VULNERABILITY, CONFIDENCE_ORDER,
+                       confidence_of, count_by_class, count_by_confidence)
 
 # Suppresses progress/status chatter (set from --quiet / non-TTY detection).
 # Findings and the final summary are never suppressed - only the noise around
@@ -54,6 +55,11 @@ def print_summary(all_tests, targets, stats, drift=None, scan_mode=None):
     print(Fore.CYAN + f"Total findings: {total_vulns} "
           f"({counts.get(CLASS_VULNERABILITY, 0)} vulnerability, "
           f"{counts.get(CLASS_POSTURE, 0)} posture)")
+    if total_vulns:
+        grades = count_by_confidence(all_tests)
+        print(Fore.CYAN + "Evidence: " + ", ".join(
+            f"{grades[name]} {name}" for name in CONFIDENCE_ORDER
+            if grades.get(name)))
     if drift is not None:
         print(Fore.CYAN + f"Against baseline: {describe_drift(drift)}")
 
@@ -64,7 +70,8 @@ def print_summary(all_tests, targets, stats, drift=None, scan_mode=None):
     for test_type, vulns in by_type.items():
         print(Fore.MAGENTA + Style.BRIGHT + f"\n--- {test_type} ---")
         for vuln in vulns:
-            print(Fore.RED + f"- [{vuln.get('severity', '')}] "
+            print(Fore.RED + f"- [{vuln.get('severity', '')}, "
+                  f"{confidence_of(vuln)}] "
                   f"{vuln['method']} {vuln['url']}")
             print(f"  Header/Parameter: {vuln.get('header_name') or vuln.get('param_name')}")
             print(f"  Payload: {vuln['payload']}")

@@ -7,7 +7,7 @@ import requests
 from colorama import Fore, Style
 
 from ..compliance import controls_for
-from .findings import CLASS_VULNERABILITY
+from .findings import CLASS_VULNERABILITY, CONFIDENCE_CONFIRMED
 from .severity import severity_for
 
 OOB_TEST_TYPE = "Blind SSRF (OOB)"
@@ -106,6 +106,9 @@ def confirm_oob_interactions(oob_manager, session, timeout, tests):
             "severity": severity_for(OOB_TEST_TYPE),
             "controls": list(controls_for(OOB_TEST_TYPE)),
             "finding_class": CLASS_VULNERABILITY,
+            # The listener recorded the interaction: this is the one grade of
+            # evidence the tool never has to qualify.
+            "confidence": CONFIDENCE_CONFIRMED,
             "url": owner.target_url,
             "method": "GET",
             "header_name": label,

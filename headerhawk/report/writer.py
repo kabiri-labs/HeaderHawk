@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 from ..compliance import controls_for, describe, summarise
-from ..core.findings import finding_class_of
+from ..core.findings import confidence_of, finding_class_of
 from ..core.severity import DEFAULT_SEVERITY, severity_for
 from .sarif import build_sarif
 
@@ -61,6 +61,7 @@ def save_results(output_file, tests, verbose):
         result.setdefault("severity", severity_for(test_type))
         result.setdefault("controls", list(controls_for(test_type)))
         result.setdefault("finding_class", finding_class_of(result))
+        result.setdefault("confidence", confidence_of(result))
 
     if extension == "json":
         with open(output_file, "w") as handle:
@@ -99,6 +100,7 @@ def save_results(output_file, tests, verbose):
                 f"- **Status Code:** {result['status_code']}",
                 f"- **Response Time:** {result.get('response_time', 0):.2f} seconds",
                 f"- **Class:** {finding_class_of(result)}",
+                f"- **Confidence:** {confidence_of(result)}",
                 f"- **Controls:** {_controls_line(result)}",
                 f"- **Analysis:** {result['analysis']}",
                 (f"- **Confirming this:** {result['confirmation']}"
