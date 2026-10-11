@@ -15,9 +15,9 @@ requirement being verified is that a header set by a load balancer or proxy
 cannot be overridden by the end user.
 """
 
-import uuid
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from ..core.markers import new_token
 from ..core.scope import SCOPE_ENDPOINT
 from .base import BaseTest
 from .wordlists import CACHE_STATUS_HEADERS, INTERMEDIARY_HEADERS
@@ -49,7 +49,7 @@ class UnkeyedInputTest(BaseTest):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.token = uuid.uuid4().hex[:12]
+        self.token = new_token()
         self.marker = f"{self.token}.example-collab.com"
         self.baseline_statuses = set()
         self.baseline_lengths = []
@@ -68,7 +68,7 @@ class UnkeyedInputTest(BaseTest):
         """
         parsed = urlparse(self.target_url)
         query = parse_qs(parsed.query)
-        query["cb"] = buster or uuid.uuid4().hex[:10]
+        query["cb"] = buster or new_token(10)
         return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
     def learn_baseline(self):

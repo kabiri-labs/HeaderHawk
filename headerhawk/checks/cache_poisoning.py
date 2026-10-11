@@ -1,7 +1,8 @@
 """Confirmed web cache poisoning via unkeyed headers."""
 
-import uuid
 from urllib.parse import parse_qs, urlencode, urlparse
+
+from ..core.markers import new_token
 
 from .base import BaseTest
 from .wordlists import CACHE_STATUS_HEADERS, UNKEYED_HOST_HEADERS
@@ -28,8 +29,8 @@ class CachePoisoningTest(BaseTest):
         return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
     def worker(self, header_name):
-        buster = uuid.uuid4().hex[:10]
-        token = uuid.uuid4().hex[:12]
+        buster = new_token(10)
+        token = new_token()
         marker = f"{token}.example-collab.com"
         url = self._url_with_buster(buster)
 

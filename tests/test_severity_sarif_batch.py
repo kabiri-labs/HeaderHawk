@@ -111,11 +111,11 @@ class FingerprintStabilityTests(unittest.TestCase):
 
     def test_two_scans_of_one_defect_share_a_fingerprint(self):
         first = _finding("Host Header Injection",
-                         url="http://t/?cb=4f1c9ab2e7",
-                         payload="9c1d4ba7f3e2.example-collab.com")
+                         url=f"http://t/?cb={hhs.new_token(10)}",
+                         payload=f"{hhs.new_token()}.example-collab.com")
         second = _finding("Host Header Injection",
-                          url="http://t/?cb=0ab33e71cc",
-                          payload="77d0c9e4a1bb.example-collab.com")
+                          url=f"http://t/?cb={hhs.new_token(10)}",
+                          payload=f"{hhs.new_token()}.example-collab.com")
         self.assertEqual(self._print(first), self._print(second))
 
     def test_two_different_defects_do_not(self):
@@ -123,21 +123,17 @@ class FingerprintStabilityTests(unittest.TestCase):
         other = _finding("Host Header Injection", header_name="X-Original-Host")
         self.assertNotEqual(self._print(one), self._print(other))
 
-    def test_a_meaningful_hex_payload_is_folded_too_which_is_the_trade(self):
-        # The fold is by shape, so it cannot tell a generated marker from a
-        # hexadecimal value that means something: two virtual hosts named in
-        # hex file under one fingerprint. Pinned rather than left to be
-        # discovered, because the alternative - narrowing the fold - would
-        # change the identity --baseline matches on and make every finding a
-        # team has already accepted look new. Both findings still appear in
-        # full in every report; only the dashboard groups them.
+    def test_a_meaningful_hex_payload_is_kept(self):
+        # The fold used to go by shape, so it could not tell a generated
+        # marker from a hexadecimal value that means something, and two
+        # virtual hosts named in hex filed under one fingerprint. The
+        # scanner's own tokens now carry a prefix and only that shape is
+        # folded, so these stay two alerts.
         one = _finding("Virtual Host Discovery", header_name="Host",
                        payload="deadbeef")
         other = _finding("Virtual Host Discovery", header_name="Host",
                          payload="cafebabe")
-        self.assertEqual(self._print(one), self._print(other))
-        # A name that is not hexadecimal is unaffected, which is every entry
-        # of the built-in wordlist.
+        self.assertNotEqual(self._print(one), self._print(other))
         self.assertNotEqual(self._print(_finding("Virtual Host Discovery",
                                                  payload="admin")),
                             self._print(_finding("Virtual Host Discovery",
@@ -146,7 +142,8 @@ class FingerprintStabilityTests(unittest.TestCase):
     def test_the_fingerprint_is_the_identity_the_baseline_matches_on(self):
         # One definition of "the same finding" for both features, so an alert
         # that --baseline calls unchanged is not a new alert on the dashboard.
-        finding = _finding("Web Cache Poisoning", payload="abc123def456.oob")
+        finding = _finding("Web Cache Poisoning",
+                           payload=f"{hhs.new_token()}.oob")
         self.assertEqual(self._print(finding), hhs.finding_identity(finding))
 
 

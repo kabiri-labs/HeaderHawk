@@ -17,11 +17,11 @@ off by default because the confirmation genuinely can disrupt other users.
 """
 
 import statistics
-import uuid
 from urllib.parse import urlparse
 
 from colorama import Fore, Style
 
+from ..core.markers import new_token
 from ..core.output import status
 from ..core.request_file import header_lines
 from ..net.raw import RawHTTPClient
@@ -192,7 +192,7 @@ class RequestSmugglingTest(BaseTest):
         Only reached with --enable-desync. The prefix is deliberately left on
         the back-end connection, which is exactly why this is opt-in.
         """
-        marker = uuid.uuid4().hex[:12]
+        marker = new_token()
         smuggled = (f"GET /{marker} HTTP/1.1\r\n"
                     f"X-Ignore: X")
         body = f"0\r\n\r\n{smuggled}"

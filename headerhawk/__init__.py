@@ -52,6 +52,8 @@ from .core.findings import (CLASS_POSTURE, CLASS_VULNERABILITY,
                             count_by_confidence, finding_class_of,
                             gated_finding_count, reportable,
                             reportable_findings, suppressed_count)
+from .core.markers import (MARKER_PREFIX, PLACEHOLDER, fold_tokens,
+                           new_token)
 from .core.oob import OOBManager, confirm_oob_interactions
 from .core.output import (is_quiet, print_summary, resolve_quiet, set_quiet,
                           status)
@@ -112,6 +114,7 @@ __all__ = [
     "collect_findings", "compare", "describe_drift", "finding_identity",
     "load_baseline",
     "OOBManager", "confirm_oob_interactions",
+    "MARKER_PREFIX", "PLACEHOLDER", "fold_tokens", "new_token",
     "is_quiet", "print_summary", "resolve_quiet", "set_quiet", "status",
     "RateLimiter", "build_session", "RequestStats",
     "DEFAULT_SEVERITY", "SEVERITY_BY_TEST", "SEVERITY_META", "SEVERITY_RANK",

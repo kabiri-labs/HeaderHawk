@@ -332,7 +332,24 @@ def resolve_drift(args, all_tests):
         print(Fore.YELLOW + f"Could not read baseline '{args.baseline}'; "
                             "skipping the comparison.")
         return None
-    return compare(collect_findings(all_tests), baseline)
+    drift = compare(collect_findings(all_tests), baseline)
+    if baseline and drift["new"] and not drift["unchanged"]:
+        # Zero overlap between two non-empty sets is almost never what the
+        # operator meant, and the summary alone - every finding new, every
+        # baseline entry fixed - does not say why. The likeliest causes are a
+        # baseline from a version whose finding identities differed, or simply
+        # the wrong file.
+        print(Fore.YELLOW + Style.BRIGHT +
+              f"\n[!] Nothing in '{args.baseline}' matched this scan "
+              f"({len(baseline)} finding(s) in the baseline, "
+              f"{len(drift['new'])} in this run), so every finding reads as "
+              f"new and every baseline entry reads as fixed.")
+        print(Fore.YELLOW +
+              "    A baseline written by an older version can do that: the "
+              "identity a finding is matched by may have changed since. Taking "
+              "the baseline again against this version settles it. Otherwise "
+              "check that the file belongs to this target.")
+    return drift
 
 
 def run_scan():

@@ -10,31 +10,23 @@ scans. Several checks put a fresh random marker in every payload - that is what
 makes their findings proof rather than guesswork - and a cache-buster lands in
 the URL. Hashing those verbatim would make every finding look new on every run,
 which is worse than having no baseline at all: the pipeline would fail forever
-and the feature would be switched off. So marker-shaped tokens are folded out
-before hashing.
+and the feature would be switched off. So the scanner's own tokens are folded
+out before hashing - and only those, which is what ``core.markers`` is for.
 """
 
 import hashlib
 import json
-import re
 
-# Long hex runs are markers, cache-busters and correlation ids - never anything
-# an operator would recognise. Folding them out can at worst merge two findings
-# into one identity; it can never invent a finding that was not there.
-_TOKEN = re.compile(r"[0-9a-f]{8,}", re.I)
-
-
-def _stable(value):
-    return _TOKEN.sub("<token>", str(value or ""))
+from .markers import fold_tokens
 
 
 def finding_identity(finding):
     """A hash that identifies the same finding across scans."""
     parts = (
         finding.get("test_type", ""),
-        _stable(finding.get("url", "")),
+        fold_tokens(finding.get("url", "")),
         finding.get("header_name") or finding.get("param_name") or "",
-        _stable(finding.get("payload", "")),
+        fold_tokens(finding.get("payload", "")),
     )
     return hashlib.sha1("|".join(parts).encode("utf-8", "ignore")).hexdigest()
 

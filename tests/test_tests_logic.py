@@ -262,11 +262,13 @@ class CachePoisoningTests(unittest.TestCase):
         self.assertIn("a=1", url)
 
     def test_worker_confirms_poisoning(self):
-        # The worker uses uuid.uuid4().hex[:12] as the token; both request and
-        # re-request bodies must carry that full token to confirm poisoning.
+        # The worker mints the token through core.markers, so it carries the
+        # scanner's prefix; both the request and the re-request bodies must
+        # carry that whole token to confirm poisoning.
+        token = hhs.MARKER_PREFIX + "TOKENTOKEN00"
         session = FakeSession(responses=[
-            FakeResponse(text="reflected TOKENTOKEN00 here"),   # poison request
-            FakeResponse(text="still TOKENTOKEN00 cached"),      # confirm request
+            FakeResponse(text=f"reflected {token} here"),    # poison request
+            FakeResponse(text=f"still {token} cached"),      # confirm request
         ])
         test = make_test(hhs.CachePoisoningTest, session)
 
