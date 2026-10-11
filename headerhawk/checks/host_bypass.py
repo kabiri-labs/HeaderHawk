@@ -93,6 +93,31 @@ class HostBypassTest(BaseTest):
                 self.second_host(host, f" Host: {marker}"),
             ),
             (
+                # The same obsolete fold, with a tab. A middlebox that strips
+                # a leading space from a continuation line does not always
+                # strip a tab, so the two reach different back-ends.
+                "Tab-folded Host header",
+                f"GET {self.path} HTTP/1.1",
+                self.second_host(host, f"	Host: {marker}"),
+            ),
+            (
+                # Which of two Host headers wins is a choice each
+                # implementation makes for itself, so the pair is sent both
+                # ways round: a front-end that reads the first and a back-end
+                # that reads the last disagree in one direction only.
+                "Duplicate Host header, injected first",
+                f"GET {self.path} HTTP/1.1",
+                self.second_host(marker, f"Host: {host}"),
+            ),
+            (
+                # RFC 7230 says a server must reject whitespace between a
+                # field name and its colon. One that reads it as a header
+                # anyway, behind one that rejected nothing, is the bug.
+                "Whitespace before the Host colon",
+                f"GET {self.path} HTTP/1.1",
+                self.second_host(host, f"Host : {marker}"),
+            ),
+            (
                 "Host override",
                 f"GET {self.path} HTTP/1.1",
                 self.base_lines(marker),

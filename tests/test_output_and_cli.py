@@ -133,16 +133,79 @@ class HostBypassConstructionTests(unittest.TestCase):
         self.assertEqual(insecure.connect_port, 80)
         self.assertFalse(insecure.client.verify)
 
-    def test_techniques_carry_marker(self):
+    MARKER = "MARKER.example-collab.com"
+
+    # Shapes that exist only because a header mapping cannot express them: two
+    # values for one field name, or a line that is not "name: value" at all.
+    # These are the reason there is a raw client at all.
+    RAW_ONLY = (
+        "Duplicate Host header",
+        "Duplicate Host header, injected first",
+        "Indented (line-folded) Host header",
+        "Tab-folded Host header",
+        "Whitespace before the Host colon",
+    )
+
+    def _techniques(self):
         test = hhs.HostBypassTest("http://example.com/", "example.com",
                                   session=FakeSession(), timeout=3)
-        techniques = test.techniques("MARKER.example-collab.com")
-        names = [name for name, _, _ in techniques]
-        self.assertIn("Duplicate Host header", names)
-        self.assertIn("Absolute-URI request line", names)
+        return {name: (line, headers)
+                for name, line, headers in test.techniques(self.MARKER)}
+
+    def test_techniques_carry_marker(self):
+        techniques = self._techniques()
+        self.assertIn("Duplicate Host header", techniques)
+        self.assertIn("Absolute-URI request line", techniques)
         # Every technique must reference the marker somewhere.
-        for _, request_line, headers in techniques:
-            self.assertTrue("MARKER" in request_line or any("MARKER" in h for h in headers))
+        for request_line, headers in techniques.values():
+            self.assertTrue(self.MARKER in request_line
+                            or any(self.MARKER in h for h in headers))
+
+    def test_the_duplicate_pair_is_sent_both_ways_round(self):
+        # Which of two Host headers wins is a choice each implementation
+        # makes, so a front-end reading the first and a back-end reading the
+        # last only disagree in one direction.
+        techniques = self._techniques()
+        first = techniques["Duplicate Host header"][1]
+        reversed_pair = techniques["Duplicate Host header, injected first"][1]
+        self.assertEqual(first[0], "Host: example.com")
+        self.assertEqual(first[1], f"Host: {self.MARKER}")
+        self.assertEqual(reversed_pair[0], f"Host: {self.MARKER}")
+        self.assertEqual(reversed_pair[1], "Host: example.com")
+
+    def test_the_two_folds_differ_in_the_byte_that_matters(self):
+        # A middlebox that strips a leading space from a continuation line
+        # does not always strip a tab.
+        techniques = self._techniques()
+        space = techniques["Indented (line-folded) Host header"][1][1]
+        tab = techniques["Tab-folded Host header"][1][1]
+        self.assertTrue(space.startswith(" Host:"), space)
+        self.assertTrue(tab.startswith("	Host:"), repr(tab))
+
+    def test_whitespace_before_the_colon_is_sent_literally(self):
+        # RFC 7230 says a server must reject it; one that reads it as a header
+        # anyway, behind one that rejected nothing, is the bug.
+        headers = self._techniques()["Whitespace before the Host colon"][1]
+        self.assertIn(f"Host : {self.MARKER}", headers)
+
+    def test_the_real_host_still_rides_on_every_pair(self):
+        # A bypass that drops the valid Host is not routable, so the shapes
+        # that add a line keep the original as well.
+        techniques = self._techniques()
+        for name in self.RAW_ONLY:
+            headers = techniques[name][1]
+            self.assertTrue(any("example.com" in line and self.MARKER not in line
+                                for line in headers), name)
+
+    def test_every_added_shape_needs_the_raw_client(self):
+        # If a shape could be expressed as a mapping of header names to
+        # values, it would not belong here - it would belong in the ordinary
+        # session with the rest of them.
+        for name in self.RAW_ONLY:
+            headers = self._techniques()[name][1]
+            host_lines = [line for line in headers
+                          if "host" in line.split(":", 1)[0].lower()]
+            self.assertGreater(len(host_lines), 1, name)
 
 
 

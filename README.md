@@ -1,9 +1,9 @@
 # HeaderHawk
 
-[![Version](https://img.shields.io/badge/version-2.16.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.17.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-660%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-665%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -60,7 +60,7 @@ HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a 
 ```markdown
 # HeaderHawk Compliance Evidence
 
-- **Tool:** HeaderHawk 2.16.0
+- **Tool:** HeaderHawk 2.17.0
 - **Target(s):** https://app.example.com/
 - **Scan mode:** unauthenticated
 - **Requests:** 604/604 succeeded (0 failed)
@@ -205,7 +205,7 @@ The threshold applies to posture only. A proven vulnerability is reported at any
 | Attack class | Vectors exercised |
 | ------------ | ----------------- |
 | **Host header injection** | 19 routing headers — `Host`, `X-Forwarded-Host`, `X-Forwarded-Server`, `X-Host`, `X-Original-Host`, `X-HTTP-Host-Override`, `Forwarded`, `Base-Url` and more — each probed with the shapes two parsers disagree about: the host plain, as a prefix (`target.marker`), as userinfo (`target@marker`), appended to a list (`target, marker`), with an explicit port and with a trailing dot; `Forwarded` with RFC 7239 parameter syntax; a URL-valued header with an absolute URL. Reflection is checked in the body, `Location` and every response header |
-| **Host validation bypass** | Duplicate `Host` headers, absolute-URI request lines, line-folded headers, host overrides — sent verbatim by a purpose-built raw HTTP/1.1 client, because `requests` would normalise them away |
+| **Host validation bypass** | Seven wire shapes a header mapping cannot express: duplicate `Host` headers **both ways round** (which of the two wins is a choice each implementation makes for itself), the obsolete fold with a space **and** with a tab (a middlebox that strips one does not always strip the other), whitespace before the colon (RFC 7230 says a server must reject it; one that reads it anyway, behind one that rejected nothing, is the bug), absolute-URI request lines and host overrides — all sent verbatim by a purpose-built raw HTTP/1.1 client, because `requests` would normalise them away |
 | **Unkeyed input discovery** | **91 intermediary-set header fields** searched by bisection — `X-Forwarded-Scheme`, `CDN-Loop`, `X-Envoy-Original-Path`, `X-Wap-Profile`, … Ruling out the whole list costs **one request**; isolating one header among ninety costs about a dozen |
 | **Web cache poisoning** | Unkeyed headers plus a cache-buster and a clean re-request that proves the poisoned response is served back |
 | **Web cache deception** | Static-looking suffixes (`.css`, `/nonexistent.js`, `;.css`, …) a router ignores but a CDN keys on |
@@ -505,7 +505,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 660 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 665 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.
