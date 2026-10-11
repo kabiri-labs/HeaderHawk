@@ -1,10 +1,14 @@
 # The integration lab
 
-HeaderHawk's unit suite is 709 tests and it answers one kind of question: given
-this response, does the check draw the right conclusion? It cannot answer the
-other kind, because a mock replies with whatever the test told it to. If an
-assumption about what a real server does is wrong, the mock is wrong in exactly
-the same way and the test passes.
+HeaderHawk's unit suite answers one kind of question: given this response, does
+the check draw the right conclusion? It cannot answer the other kind, because a
+mock replies with whatever the test told it to. If an assumption about what a
+real server does is wrong, the mock is wrong in exactly the same way and the
+test passes.
+
+Thirty-one of those tests are about this lab rather than about the scanner, in
+`tests/test_integration_lab.py`. The comparison below decides whether every
+other claim here holds, so it is tested like anything else that judges.
 
 This lab answers the other kind. A real application, a real reverse proxy and
 real caches, and the scanner is the same command a user runs.

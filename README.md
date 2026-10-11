@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-2.19.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-709%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-740%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -200,7 +200,7 @@ The threshold applies to posture only. A proven vulnerability is reported at any
 
 ### Checked against real servers, not only mocks
 
-The 709 offline tests answer one kind of question: given this response, does the check draw the right conclusion? They cannot answer the other kind, because a mock replies with whatever the test told it to — so an assumption about what a real server does that is wrong is wrong in the test too, and the test passes.
+The offline suite answers one kind of question: given this response, does the check draw the right conclusion? They cannot answer the other kind, because a mock replies with whatever the test told it to — so an assumption about what a real server does that is wrong is wrong in the test too, and the test passes.
 
 `lab/` is a Docker lab that answers the other kind. Five containers: the application under test with a vulnerable route and a secure twin for each weakness, an nginx front-end that refuses an unknown host and owns the forwarding headers, Varnish with the cache key it ships with, the same Varnish with the header added to the key, and a cache whose key leaves the query string out. One command brings it up, scans every scenario with this CLI and these defaults, compares, and tears it down:
 
@@ -538,7 +538,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Three of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 709 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 740 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 3. **A detection claim is checked against a real server.** A change to what a check concludes gets a scenario in `lab/scenarios.json`, with what it should report and what it should not, and `python lab/lab.py` run against it. The lab is never edited to make the scanner pass.
 

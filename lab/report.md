@@ -3,7 +3,7 @@
 What this scanner does against real servers, compared with what was declared before it ran.
 
 - HeaderHawk **2.19.0**, run as `python headerhawk.py <target>` with the shipped defaults.
-- Generated 2026-10-11 10:36 UTC by `lab/run.py`. Re-run it with `python lab/lab.py`.
+- Generated 2026-10-11 11:08 UTC by `lab/run.py`. Re-run it with `python lab/lab.py`.
 - Reporting threshold: **medium and above**, the default. Findings below it are listed where they occur and are not counted against the scanner.
 - The intrusive request-smuggling confirmation needs `--enable-desync` and was never sent.
 
@@ -56,7 +56,7 @@ What this scanner does against real servers, compared with what was declared bef
 ### open-redirect-confirmed
 
 - **Reported anyway** (forbidden by the scenario): Host Header Bypass / Potentially Vulnerable / suspected / High / Host override
-  - Bypass technique: Host override. Marker reflected in 'Location': https://hhcb3d28792570.example-collab.com/home
+  - Bypass technique: Host override. Marker reflected in 'Location': https://hhe670b15b39bd.example-collab.com/home
 - **Judgement:** The 'Host override' finding is the same gap as in host-bypass-reflected, reproduced on a second route: an ordinary Host header reflected by a target that validates nothing is reported as a High bypass. Here the same observation is already reported, correctly, as a confirmed Open Redirect and a confirmed Host Header Poisoning - so the bypass finding adds a third copy of it, at the highest severity of the three, describing a refusal that never happened.
 
 ### cache-blind-query-key
@@ -86,14 +86,14 @@ A forwarding header becomes the host of a link the page points a browser at. Doe
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Host Header Injection / Vulnerable / confirmed / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh20c22f1a898c.example-collab.com) in the response body, and the same probe produced it again on a second request. Shape(s) reflected: appended to a |
+| Host Header Injection / Vulnerable / confirmed / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh8ecd3cff2a26.example-collab.com) in the response body, and the same probe produced it again on a second request. Shape(s) reflected: appended to a |
 | Unkeyed Input / Potentially Vulnerable / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' changes the response - the marker was reflected in the response - so the application honours a header field an intermediary is meant to own. No cache in front of this endpoint served the changed response back, so poisoning is not demonstrate |
 | not: Web Cache Poisoning | absent, as declared | - |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh20c22f1a898c.example-collab.com' 'http://app:8000/link'
+curl -s -i -H 'X-Forwarded-Host: hh8ecd3cff2a26.example-collab.com' 'http://app:8000/link'
 ```
 
 <a id="host-injection-echo-only"></a>
@@ -105,7 +105,7 @@ The same header, printed as text and pointed at by nothing. A scanner that calls
 - **Target:** `http://app:8000/echo`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/echo --output /out/host-injection-echo-only.json --evidence /out/host-injection-echo-only.evidence.json`
-- **Exit code:** 1, in 18.3s
+- **Exit code:** 1, in 18.5s
 - **Evidence:** `out/host-injection-echo-only.json`, `out/host-injection-echo-only.evidence.json`, `out/host-injection-echo-only.log`
 
 | Declared | Verdict | What the scanner said |
@@ -117,7 +117,7 @@ The same header, printed as text and pointed at by nothing. A scanner that calls
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: app@hh75d624d59663.example-collab.com' 'http://app:8000/echo'
+curl -s -i -H 'X-Forwarded-Host: app.hh38f3b233edb9.example-collab.com' 'http://app:8000/echo'
 ```
 
 <a id="host-injection-proxy-fixed"></a>
@@ -129,7 +129,7 @@ The same application, behind a proxy that sets the forwarding headers itself. Th
 - **Target:** `http://allowed.lab/link`
 - **Stack:** scanner -> nginx -> app
 - **Command:** `python /hh/headerhawk.py http://allowed.lab/link --output /out/host-injection-proxy-fixed.json --evidence /out/host-injection-proxy-fixed.evidence.json`
-- **Exit code:** 0, in 1.3s
+- **Exit code:** 0, in 1.1s
 - **Evidence:** `out/host-injection-proxy-fixed.json`, `out/host-injection-proxy-fixed.evidence.json`, `out/host-injection-proxy-fixed.log`
 
 | Declared | Verdict | What the scanner said |
@@ -147,7 +147,7 @@ An application that reads every Host header it was sent, and trusts an absolute 
 - **Target:** `http://app:8000/hostreflect`
 - **Stack:** scanner -> app (raw HTTP)
 - **Command:** `python /hh/headerhawk.py http://app:8000/hostreflect --output /out/host-bypass-reflected.json --evidence /out/host-bypass-reflected.evidence.json`
-- **Exit code:** 1, in 17.7s
+- **Exit code:** 1, in 17.9s
 - **Evidence:** `out/host-bypass-reflected.json`, `out/host-bypass-reflected.evidence.json`, `out/host-bypass-reflected.log`
 
 | Declared | Verdict | What the scanner said |
@@ -165,7 +165,7 @@ An application that reads every Host header it was sent, and trusts an absolute 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Host: app.hhe82845f783ac.example-collab.com' 'http://app:8000/hostreflect'
+curl -s -i -H 'Host: app.hh5f46c768da9e.example-collab.com' 'http://app:8000/hostreflect'
 ```
 
 <a id="host-bypass-guarded"></a>
@@ -177,7 +177,7 @@ A front-end that answers every host it does not know with 403. Does any raw shap
 - **Target:** `http://proxy/hostreflect`
 - **Stack:** scanner -> nginx (unknown host refused) -> app
 - **Command:** `python /hh/headerhawk.py http://proxy/hostreflect --output /out/host-bypass-guarded.json --evidence /out/host-bypass-guarded.evidence.json`
-- **Exit code:** 1, in 1.1s
+- **Exit code:** 1, in 1.3s
 - **Evidence:** `out/host-bypass-guarded.json`, `out/host-bypass-guarded.evidence.json`, `out/host-bypass-guarded.log`
 
 | Declared | Verdict | What the scanner said |
@@ -203,16 +203,16 @@ The Host header decides where a 302 sends a browser. Does the scanner confirm it
 - **Target:** `http://app:8000/redirect`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/redirect --output /out/open-redirect-confirmed.json --evidence /out/open-redirect-confirmed.evidence.json`
-- **Exit code:** 1, in 11.6s
+- **Exit code:** 1, in 11.9s
 - **Evidence:** `out/open-redirect-confirmed.json`, `out/open-redirect-confirmed.evidence.json`, `out/open-redirect-confirmed.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Open Redirect / Vulnerable / confirmed / Medium / Host | produced | The redirect target follows the 'Host' header: 'https://hh9554c89fc6c1.example-collab.com/home' points at a host minted for this scan, on a 302 a browser follows, and an identical second probe redirected the same way. No site redirects there for its own reason |
-| Host Header Poisoning / Vulnerable / confirmed / Medium / Host | produced | 'Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh3204d7f24792.example-collab.com) in the 'Location' header, and the same probe produced it again on a second request. Shape(s) reflected: appended to a list, p |
+| Open Redirect / Vulnerable / confirmed / Medium / Host | produced | The redirect target follows the 'Host' header: 'https://hh6400b096937e.example-collab.com/home' points at a host minted for this scan, on a 302 a browser follows, and an identical second probe redirected the same way. No site redirects there for its own reason |
+| Host Header Poisoning / Vulnerable / confirmed / Medium / Host | produced | 'Host' decides a host this response points a browser at: the marker came back as the host of a URL (hhf56c17b5c1c8.example-collab.com) in the 'Location' header, and the same probe produced it again on a second request. Shape(s) reflected: appended to a list, p |
 | Host Header Bypass / Indented (line-folded) Host header | produced | Bypass technique: Indented (line-folded) Host header. Marker reflected in header(s): ['Host'] |
 | Host Header Bypass / Tab-folded Host header | produced | Bypass technique: Tab-folded Host header. Marker reflected in header(s): ['Host'] |
-| Host Header Bypass / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in 'Location': https://hhcb3d28792570.example-collab.com/home |
+| Host Header Bypass / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in 'Location': https://hhe670b15b39bd.example-collab.com/home |
 | not: Host Header Bypass / Duplicate Host header | absent, as declared | - |
 | nothing declared this | **reported anyway** | Host Header Bypass / Potentially Vulnerable / suspected / High / Host override |
 
@@ -221,7 +221,7 @@ The Host header decides where a 302 sends a browser. Does the scanner confirm it
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Host: hh3204d7f24792.example-collab.com' 'http://app:8000/redirect'
+curl -s -i -H 'Host: hhf56c17b5c1c8.example-collab.com' 'http://app:8000/redirect'
 ```
 
 <a id="open-redirect-canonical"></a>
@@ -251,18 +251,18 @@ Any origin mirrored back, with credentials. Both halves of that are findings. Do
 - **Target:** `http://app:8000/cors`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/cors --output /out/cors-reflected.json --evidence /out/cors-reflected.evidence.json`
-- **Exit code:** 1, in 17.6s
+- **Exit code:** 1, in 17.5s
 - **Evidence:** `out/cors-reflected.json`, `out/cors-reflected.evidence.json`, `out/cors-reflected.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| CORS Origin Reflection / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin' echoed a unique origin that cannot exist (http://hh4b967adb61b2.example-collab.com), so the server reflects whatever Origin it is sent instead of validating against an allowlist; credentials are allowed, so an attacker's page can  |
+| CORS Origin Reflection / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin' echoed a unique origin that cannot exist (http://hhf99b78ed4c61.example-collab.com), so the server reflects whatever Origin it is sent instead of validating against an allowlist; credentials are allowed, so an attacker's page can  |
 | CORS Null Origin / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin: null' is returned for 'Origin: null', which any sandboxed iframe or redirected request can present; credentials are allowed, so an attacker's page can read authenticated responses. |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Origin: http://hh4b967adb61b2.example-collab.com' 'http://app:8000/cors'
+curl -s -i -H 'Origin: http://hhf99b78ed4c61.example-collab.com' 'http://app:8000/cors'
 ```
 
 <a id="cors-allowlist"></a>
@@ -274,7 +274,7 @@ One origin on an allowlist and no CORS headers for anyone else. Does the scanner
 - **Target:** `http://app:8000/secure/cors`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/secure/cors --output /out/cors-allowlist.json --evidence /out/cors-allowlist.evidence.json`
-- **Exit code:** 0, in 17.8s
+- **Exit code:** 0, in 17.7s
 - **Evidence:** `out/cors-allowlist.json`, `out/cors-allowlist.evidence.json`, `out/cors-allowlist.log`
 
 | Declared | Verdict | What the scanner said |
@@ -294,19 +294,19 @@ A cache with the key it ships with, in front of an application that builds links
 - **Target:** `http://cache/link`
 - **Stack:** scanner -> varnish (default key) -> app
 - **Command:** `python /hh/headerhawk.py http://cache/link --output /out/cache-poisoning-default-key.json --evidence /out/cache-poisoning-default-key.evidence.json`
-- **Exit code:** 1, in 5.4s
+- **Exit code:** 1, in 5.3s
 - **Evidence:** `out/cache-poisoning-default-key.json`, `out/cache-poisoning-default-key.evidence.json`, `out/cache-poisoning-default-key.log`
 
 > Not exhaustive: the cache changes what every other check sees on this target, and this scenario is about one claim. The scenarios either side of it are the controlled comparison.
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Web Cache Poisoning / Vulnerable / High / X-Forwarded-Host | produced | 'X-Forwarded-Host' was found by search rather than from a fixed list, and is unkeyed: the poisoned response was served to a request that never carried the header. Cache headers: {'Age': '0', 'X-Varnish': '229411 229410'}. |
+| Web Cache Poisoning / Vulnerable / High / X-Forwarded-Host | produced | 'X-Forwarded-Host' was found by search rather than from a fixed list, and is unkeyed: the poisoned response was served to a request that never carried the header. Cache headers: {'Age': '0', 'X-Varnish': '98362 98361'}. |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh7482e0c8be56.example-collab.com' 'http://cache/link?cb=hh04421f1163'
+curl -s -i -H 'X-Forwarded-Host: hh803d9cefa429.example-collab.com' 'http://cache/link?cb=hh6a268851c6'
 ```
 
 <a id="cache-poisoning-keyed"></a>
@@ -331,7 +331,7 @@ Also reported here, outside what this scenario asserts: Host Header Injection / 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh202734154bb3.example-collab.com' 'http://cache-keyed/link'
+curl -s -i -H 'X-Forwarded-Host: hheaad606abc96.example-collab.com' 'http://cache-keyed/link'
 ```
 
 <a id="cache-blind-query-key"></a>
@@ -343,7 +343,7 @@ A cache that ignores the query string answers every cache-buster from one stored
 - **Target:** `http://querycache/link`
 - **Stack:** scanner -> nginx (key without the query string) -> app
 - **Command:** `python /hh/headerhawk.py http://querycache/link --output /out/cache-blind-query-key.json --evidence /out/cache-blind-query-key.evidence.json`
-- **Exit code:** 0, in 1.3s
+- **Exit code:** 0, in 1.2s
 - **Evidence:** `out/cache-blind-query-key.json`, `out/cache-blind-query-key.evidence.json`, `out/cache-blind-query-key.log`
 
 | Declared | Verdict | What the scanner said |
@@ -367,7 +367,7 @@ A router that ignores a path parameter, on a page a shared cache is free to stor
 - **Target:** `http://app:8000/deception`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/deception --output /out/cache-deception.json --evidence /out/cache-deception.evidence.json`
-- **Exit code:** 1, in 18.1s
+- **Exit code:** 1, in 17.9s
 - **Evidence:** `out/cache-deception.json`, `out/cache-deception.evidence.json`, `out/cache-deception.log`
 
 | Declared | Verdict | What the scanner said |
@@ -389,7 +389,7 @@ A page with no response-header posture at all, over plaintext. Does the scanner 
 - **Target:** `http://app:8000/weak`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/weak --output /out/posture-weak.json --evidence /out/posture-weak.evidence.json`
-- **Exit code:** 0, in 17.7s
+- **Exit code:** 0, in 17.8s
 - **Evidence:** `out/posture-weak.json`, `out/posture-weak.evidence.json`, `out/posture-weak.log`
 
 | Declared | Verdict | What the scanner said |
@@ -426,7 +426,7 @@ The same application with the response headers right and a cookie that carries e
 - **Target:** `http://app:8000/secure/page`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/secure/page --output /out/posture-hardened.json --evidence /out/posture-hardened.evidence.json`
-- **Exit code:** 0, in 18.0s
+- **Exit code:** 0, in 17.8s
 - **Evidence:** `out/posture-hardened.json`, `out/posture-hardened.evidence.json`, `out/posture-hardened.log`
 
 | Declared | Verdict | What the scanner said |
@@ -452,7 +452,7 @@ An API reply with none of the document headers. A browser renders nothing here, 
 - **Target:** `http://app:8000/secure/json`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/secure/json --output /out/posture-json.json --evidence /out/posture-json.evidence.json`
-- **Exit code:** 0, in 18.0s
+- **Exit code:** 0, in 17.8s
 - **Evidence:** `out/posture-json.json`, `out/posture-json.evidence.json`, `out/posture-json.log`
 
 | Declared | Verdict | What the scanner said |
@@ -474,7 +474,7 @@ This URL's own response is hardened; it redirects to one that is not. Whose resp
 - **Target:** `http://app:8000/offsite`
 - **Stack:** scanner -> app (302) -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/offsite --output /out/posture-redirect-attribution.json --evidence /out/posture-redirect-attribution.evidence.json`
-- **Exit code:** 0, in 14.5s
+- **Exit code:** 0, in 14.7s
 - **Evidence:** `out/posture-redirect-attribution.json`, `out/posture-redirect-attribution.evidence.json`, `out/posture-redirect-attribution.log`
 
 | Declared | Verdict | What the scanner said |
