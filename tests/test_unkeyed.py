@@ -113,8 +113,13 @@ class DiffTests(unittest.TestCase):
     def test_a_body_far_outside_the_baseline_counts(self):
         self.assertTrue(self.test.differs(_page("x" * 5000))[0])
 
-    def test_a_body_within_tolerance_does_not(self):
-        self.assertFalse(self.test.differs(_page("<html>home!</html>"))[0])
+    def test_an_identical_body_does_not(self):
+        self.assertFalse(self.test.differs(_page("<html>home</html>"))[0])
+
+    def test_a_small_change_counts_on_a_page_that_reproduces_itself(self):
+        # The whole point of comparing an artefact rather than a length: a
+        # cache gadget changes a URL, not the page's weight.
+        self.assertTrue(self.test.differs(_page("<html>home!</html>"))[0])
 
 
 class IsolationTests(unittest.TestCase):
@@ -191,14 +196,16 @@ class CacheBustingTests(unittest.TestCase):
 
     def test_the_confirmation_pair_shares_one_buster(self):
         # The opposite requirement: proving a cache serves the poisoned copy
-        # only works when both requests ask for the same key.
+        # only works when both requests ask for the same key. The control that
+        # follows them is the one request that must not share it.
         test = _make(_honours(["X-Forwarded-Scheme"], cached=True))
         test.learn_baseline()
         before = len(test.session.calls)
         test.confirm_poisoning("X-Forwarded-Scheme")
         busters = self._busters(test.session.calls[before:])
-        self.assertEqual(len(busters), 2)
+        self.assertEqual(len(busters), 3)
         self.assertEqual(busters[0], busters[1])
+        self.assertNotIn(busters[2], busters[:2])
 
 
 class ReportingTests(unittest.TestCase):
@@ -231,6 +238,358 @@ class ReportingTests(unittest.TestCase):
     def test_the_reproduction_carries_the_header(self):
         found = self._run(_honours(["X-Forwarded-Scheme"], cached=False))
         self.assertIn("-H 'X-Forwarded-Scheme:", found[0]["repro"])
+
+
+class ArtefactTests(unittest.TestCase):
+    """What counts as a change, and what is the page moving on its own."""
+
+    CANONICAL = '<link rel="canonical" href="https://aa.example/x">'
+    POISONED = '<link rel="canonical" href="https://bb.example/x">'
+
+    def _page_with(self, extra=""):
+        return f"<html><head>{self.CANONICAL}</head><body>home{extra}</body></html>"
+
+    def test_a_url_that_changes_without_changing_the_length_is_found(self):
+        # Identical byte counts, so no length comparison could ever see it.
+        self.assertEqual(len(self.CANONICAL), len(self.POISONED))
+        baseline = self._page_with()
+        poisoned = baseline.replace(self.CANONICAL, self.POISONED)
+        self.assertEqual(len(baseline), len(poisoned))
+
+        test = _make(lambda url, headers: _page(
+            poisoned if any(k.lower() == "x-forwarded-host" for k in headers)
+            else baseline))
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        moved, reason = test.affects(["X-Forwarded-Host"])
+        self.assertTrue(moved)
+        self.assertIn("cache key", reason)
+
+    def test_a_change_only_in_a_response_header_is_found(self):
+        def responder(url, headers):
+            if any(k.lower() == "x-forwarded-host" for k in headers):
+                return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                    headers={"Link": "<https://bb.example/>; rel=preload"})
+            return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                headers={"Link": "<https://aa.example/>; rel=preload"})
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_nonce_the_page_changes_by_itself_is_not_a_change(self):
+        counter = [0]
+
+        def responder(url, headers):
+            counter[0] += 1
+            return _page(f'<html><meta nonce="nonce{counter[0]:08d}">home</html>')
+
+        test = _make(responder)
+        test.learn_baseline()
+        # The samples agreed once the nonce was folded out, so the precise
+        # comparison is in use - and the nonce still does not trip it.
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_page_that_will_not_reproduce_itself_falls_back(self):
+        counter = [0]
+
+        def responder(url, headers):
+            counter[0] += 1
+            # A different amount of content every time, not just a token.
+            return _page("<html>home" + ("spam " * counter[0] * 40) + "</html>")
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNone(test.baseline_artefact)
+        # With no artefact to compare, only a difference beyond the page's own
+        # variance means anything - the behaviour this check always had.
+        self.assertFalse(test.differs(_page("<html>home!</html>"))[0])
+
+
+class TypedValueTests(unittest.TestCase):
+    """A candidate has to carry a value of the shape it really holds."""
+
+    def test_a_scheme_header_is_sent_the_other_scheme(self):
+        # BASE is http://, so the probe has to be https. Offering a target the
+        # scheme it already has asks it nothing: an application that rebuilds
+        # every URL from the header returns exactly the baseline.
+        test = _make(_honours([]))
+        values = test._values_for(["X-Forwarded-Proto", "X-Forwarded-Port",
+                                   "True-Client-IP", "X-Forwarded-Host"])
+        self.assertEqual(values["X-Forwarded-Proto"], "https")
+        self.assertEqual(values["X-Forwarded-Port"], "8080")
+        self.assertNotIn(".example-collab.com", values["True-Client-IP"])
+        self.assertEqual(values["X-Forwarded-Host"], test.marker)
+
+    def test_an_https_target_is_sent_the_downgrade(self):
+        test = UnkeyedInputTest("https://t.example/", "t.example",
+                                session=_Target(_honours([])), timeout=1,
+                                verbose=0, quiet=True)
+        self.assertEqual(test._value_for("X-Forwarded-Proto"), "http")
+        self.assertEqual(test._value_for("X-Forwarded-Ssl"), "off")
+
+    def test_a_target_already_on_the_probe_port_is_offered_another(self):
+        test = UnkeyedInputTest("https://t.example:8080/", "t.example",
+                                session=_Target(_honours([])), timeout=1,
+                                verbose=0, quiet=True)
+        self.assertEqual(test._value_for("X-Forwarded-Port"), "8081")
+
+    def test_a_path_header_carries_the_marker_in_a_path(self):
+        test = _make(_honours([]))
+        value = test._values_for(["X-Original-URL"])["X-Original-URL"]
+        self.assertTrue(value.startswith("/"))
+        self.assertIn(test.marker, value)
+
+    def test_a_header_with_no_room_for_a_marker_can_still_be_confirmed(self):
+        # The value is "http", so there is no marker to look for: the clean
+        # request has to come back as the poisoned response instead. Before
+        # this, such a header could never be more than suspected.
+        test = _make(_honours(["X-Forwarded-Proto"], cached=True))
+        test.learn_baseline()
+        confirmed = test.confirm_poisoning("X-Forwarded-Proto")
+        self.assertIsNotNone(confirmed)
+        self.assertFalse(confirmed[3])          # not by the marker
+        found = test.vulnerabilities_found
+        test.report("X-Forwarded-Proto", "the response changed")
+        self.assertEqual(test.vulnerabilities_found[-1]["test_type"],
+                         "Web Cache Poisoning")
+        self.assertIn("rather than the baseline one",
+                      test.vulnerabilities_found[-1]["analysis"])
+
+
+class CacheKeyTests(unittest.TestCase):
+    """A cache that ignores the query makes the whole search blind."""
+
+    def _cached_regardless(self, header, value):
+        def responder(url, headers):
+            # The same stored response whatever the URL asks for.
+            return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                headers={header: value})
+        return responder
+
+    def test_a_hit_on_an_invented_url_stops_the_search(self):
+        test = _make(self._cached_regardless("X-Cache", "HIT"))
+        self.assertFalse(test.learn_baseline())
+        self.assertTrue(test.skipped)
+        self.assertIn("not part of its key", test.skip_reason)
+        self.assertIn("X-Cache", test.skip_reason)
+
+    def test_a_hit_counter_above_zero_counts_as_a_hit(self):
+        # "X-Cache-Hits: 1" is in the cache-status list and contains no word
+        # to match, so it used to read as a miss and the search went on blind.
+        test = _make(self._cached_regardless("X-Cache-Hits", "1"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+        self.assertIn("X-Cache-Hits", test.skip_reason)
+
+    def test_a_hit_counter_of_zero_is_not_a_hit(self):
+        test = _make(self._cached_regardless("X-Cache-Hits", "0"))
+        self.assertTrue(test.learn_baseline())
+
+    def test_one_tier_of_several_reporting_a_hit_counts(self):
+        # A cache with more than one tier sends a count per tier, and so does
+        # the client library when two of them set the same header. Reading the
+        # whole field as one number rejected it and the search went on blind.
+        test = _make(self._cached_regardless("X-Cache-Hits", "0, 1"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+
+    def test_every_tier_reporting_a_miss_is_still_a_miss(self):
+        test = _make(self._cached_regardless("X-Cache-Hits", "0, 0"))
+        self.assertTrue(test.learn_baseline())
+
+    def test_a_comma_joined_age_counts_too(self):
+        test = _make(self._cached_regardless("Age", "0, 41"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+
+    def test_an_age_above_zero_counts_as_a_hit(self):
+        test = _make(self._cached_regardless("Age", "41"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+
+    def test_a_miss_is_not_mistaken_for_one(self):
+        test = _make(self._cached_regardless("X-Cache", "MISS"))
+        self.assertTrue(test.learn_baseline())
+
+    def test_an_age_of_zero_is_not_a_hit(self):
+        test = _make(self._cached_regardless("Age", "0"))
+        self.assertTrue(test.learn_baseline())
+
+    def test_the_run_reports_the_reason_rather_than_a_clean_result(self):
+        # A clean result here would mean only that the search was blind.
+        test = _make(self._cached_regardless("CF-Cache-Status", "HIT"))
+        test.run()
+        self.assertEqual(test.vulnerabilities_found, [])
+        self.assertFalse(test.assessed)
+        self.assertIn("not part of its key", test.skip_reason)
+
+
+class NoiseTests(unittest.TestCase):
+    """What the page moves by itself must not read as what a header moved."""
+
+    def _ticking(self, template):
+        clock = [1760140800]
+
+        def responder(url, headers):
+            clock[0] += 1
+            return _page(template.format(value=clock[0]))
+        return responder
+
+    def test_a_timestamp_does_not_make_every_candidate_look_significant(self):
+        # The baseline can only enumerate the values a page used while it was
+        # sampled. The next request carries one it never saw, and masking only
+        # the three seen left every candidate header looking significant.
+        test = _make(self._ticking('<html>home <span>{value}</span></html>'))
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+        self.assertEqual(test.isolate(list(INTERMEDIARY_HEADERS)), [])
+
+    def test_the_shape_is_learned_where_it_was_seen(self):
+        test = _make(self._ticking('<html>home <span id="ts">{value}</span></html>'))
+        test.learn_baseline()
+        self.assertTrue(any("d" in shapes
+                            for shapes in test._volatile_at.values()))
+
+    def test_a_counter_with_a_prefix_generalises_too(self):
+        test = _make(self._ticking('<html>home req{value}</html>'))
+        test.learn_baseline()
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_an_all_letter_shape_is_not_generalised(self):
+        # Masking every word-shaped run because one of them moved would mask
+        # most of the page, and with it the change this check looks for.
+        words = ["alphaaa", "bravooo", "charlie", "deltaaa"]
+
+        def responder(url, headers):
+            return _page(f"<html>home {words.pop(0) if words else 'echoooo'}</html>")
+
+        test = _make(responder)
+        test.learn_baseline()
+        # A word-shaped run that moved is still masked where it moved; what
+        # must not happen is every word on the page going with it.
+        self.assertTrue(test._volatile_at)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_noise_in_one_place_does_not_mask_the_same_shape_elsewhere(self):
+        # The defect a shape learned globally would cause: a timestamp teaches
+        # that digits are noise, and a candidate whose only effect is changing
+        # an account id in a URL is discarded with it.
+        clock = [1760140800]
+
+        def responder(url, headers):
+            clock[0] += 1
+            moved = any(k.lower() == "x-forwarded-host" for k in headers)
+            account = "87654321" if moved else "12345678"
+            return _page(f'<html><a href="/account/{account}">acct</a>'
+                         f'<span id="ts">{clock[0]}</span></html>')
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_noise_in_a_canonical_header_does_not_blind_the_comparison(self):
+        # Volatility is learned from everything the artefact hashes. Learning
+        # it from the body alone left the samples disagreeing whenever one of
+        # those headers rotated, and the comparison fell back to body length.
+        build = [0]
+
+        def responder(url, headers):
+            build[0] += 1
+            return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                headers={"Link": f"<https://cdn/b{build[0]:08d}/a.js>; rel=preload"})
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+
+    def test_noise_in_one_row_does_not_mask_the_next_row(self):
+        # The same markup in front of every row, so a prefix alone is not a
+        # position: a timestamp moving in the first row must not mask the
+        # account id in the second.
+        clock = [1760140800]
+
+        def responder(url, headers):
+            clock[0] += 1
+            moved = any(k.lower() == "x-forwarded-host" for k in headers)
+            second = "87654321" if moved else "12345678"
+            return _page(f"<html>"
+                         f"<tr><td>id</td><td>{clock[0]}</td></tr>"
+                         f"<tr><td>id</td><td>{second}</td></tr>"
+                         f"</html>")
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_stable_generated_looking_token_is_not_masked(self):
+        # A tenant id or an asset hash has the shape of something generated,
+        # and one of those changing is a finding, not noise.
+        def responder(url, headers):
+            moved = any(k.lower() == "x-forwarded-host" for k in headers)
+            asset = "app-b7f3c91d4e" if moved else "app-a1e5d02f9c"
+            return _page(f'<html><script src="/static/{asset}.js"></script></html>')
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_nonce_whose_shape_changes_is_still_masked(self):
+        # Where the page was seen moving, anything generated-looking goes:
+        # consecutive hex nonces do not share a shape, so the shape alone
+        # could never have caught the next one.
+        nonces = ["a3f9c2d8e1b4", "7d1e0b5a8c32", "f20c7e4d9a16", "4b8a1f6c3d05"]
+
+        def responder(url, headers):
+            value = nonces.pop(0) if nonces else "9e2d7c1b8a40"
+            return _page(f'<html><style nonce="{value}">x</style>home</html>')
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+
+class DeployTests(unittest.TestCase):
+    """A page that changes globally is not a cache serving a poisoned copy."""
+
+    @staticmethod
+    def _deploys_after_baseline(samples):
+        state = {"served": 0}
+
+        def responder(url, headers):
+            state["served"] += 1
+            if state["served"] <= samples:
+                return _page("<html>home v1</html>")
+            return _page("<html>home v2 with rather more words in it</html>")
+        return responder
+
+    def test_a_global_change_is_not_a_confirmed_poisoning(self):
+        # Poisoned and clean both come back as v2, which differs from the v1
+        # baseline, and no cache is involved anywhere.
+        test = _make(self._deploys_after_baseline(UnkeyedInputTest.BASELINE_SAMPLES))
+        test.learn_baseline()
+        self.assertIsNone(test.confirm_poisoning("X-Forwarded-Scheme"))
+
+    def test_and_the_run_reports_it_as_unconfirmed_instead(self):
+        test = _make(self._deploys_after_baseline(UnkeyedInputTest.BASELINE_SAMPLES))
+        test.run()
+        for finding in test.vulnerabilities_found:
+            self.assertEqual(finding["test_type"], "Unkeyed Input")
+
+    def test_a_real_cache_still_confirms(self):
+        # The control asks for a key the cache has never been asked for, so it
+        # comes back clean while the poisoned key does not.
+        test = _make(_honours(["X-Forwarded-Scheme"], cached=True))
+        test.learn_baseline()
+        self.assertIsNotNone(test.confirm_poisoning("X-Forwarded-Scheme"))
 
 
 class CandidateTests(unittest.TestCase):
