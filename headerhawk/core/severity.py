@@ -4,6 +4,7 @@
 # `security-severity` score that code-scanning platforms consume.
 SEVERITY_BY_TEST = {
     "Host Header Injection": "Medium",
+    "Host Header Poisoning": "Medium",
     "Host Header Bypass": "High",
     "Web Cache Poisoning": "High",
     "Unkeyed Input": "Medium",

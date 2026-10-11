@@ -226,26 +226,71 @@ class OpenRedirectTests(unittest.TestCase):
         payloads = test.generate_payloads()
         self.assertIn("oob.example.com", payloads[0])
 
-    def test_worker_records_matching_redirect(self):
+    @staticmethod
+    def _redirecting(payload_host=None):
+        """Answer every request with a redirect to the Host it was sent."""
+        def respond(method, url=None, headers=None, **kwargs):
+            host = payload_host or (headers or {}).get("Host", "")
+            return FakeResponse(status_code=302, url="http://example.com/",
+                                headers={"Location": f"http://{host}/"})
+        return respond
+
+    def test_worker_collects_a_matching_redirect_without_reporting_it(self):
         test = make_test(hhs.OpenRedirectTest, FakeSession())
-        test.request = lambda *a, **k: FakeResponse(
-            status_code=302, headers={"Location": "http://example.com/"},
-            url="http://example.com/")
+        test.request = self._redirecting()
         test.worker("GET", "Host", "example.com")
-        self.assertEqual(len(test.vulnerabilities_found), 1)
+        self.assertEqual(len(test._hits), 1)
+        self.assertEqual(test.vulnerabilities_found, [])
 
     def test_worker_ignores_non_matching_host(self):
         test = make_test(hhs.OpenRedirectTest, FakeSession())
         test.request = lambda *a, **k: FakeResponse(
             status_code=302, headers={"Location": "http://real-site/"})
         test.worker("GET", "Host", "example.com")
-        self.assertEqual(test.vulnerabilities_found, [])
+        self.assertEqual(test._hits, [])
 
     def test_worker_ignores_non_redirect_status(self):
         test = make_test(hhs.OpenRedirectTest, FakeSession())
         test.request = lambda *a, **k: FakeResponse(status_code=200)
         test.worker("GET", "Host", "example.com")
-        self.assertEqual(test.vulnerabilities_found, [])
+        self.assertEqual(test._hits, [])
+
+    def test_every_accepted_host_is_one_finding(self):
+        # Four payloads reach the same conclusion - the redirect follows the
+        # Host header - which is one defect with one place to fix it.
+        test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
+        test.request = self._redirecting()
+        test.run()
+        self.assertEqual(len(test.vulnerabilities_found), 1)
+        finding = test.vulnerabilities_found[0]
+        for payload in test.generate_payloads():
+            self.assertIn(payload, finding["analysis"])
+
+    def test_a_redirect_that_holds_twice_is_confirmed(self):
+        test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
+        test.request = self._redirecting()
+        test.run()
+        finding = test.vulnerabilities_found[0]
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_CONFIRMED)
+        self.assertEqual(finding["test_result"], "Vulnerable")
+
+    def test_a_redirect_that_does_not_hold_is_suspected(self):
+        seen = []
+
+        def respond(method, url=None, headers=None, **kwargs):
+            host = (headers or {}).get("Host", "")
+            seen.append(host)
+            if seen.count(host) > 1:          # the repeat probe
+                return FakeResponse(status_code=200, url="http://example.com/")
+            return FakeResponse(status_code=302, url="http://example.com/",
+                                headers={"Location": f"http://{host}/"})
+
+        test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
+        test.request = respond
+        test.run()
+        finding = test.vulnerabilities_found[0]
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
+        self.assertIn("did not redirect the same way", finding["analysis"])
 
 
 class URLParameterTests(unittest.TestCase):
