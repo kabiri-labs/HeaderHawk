@@ -7,9 +7,16 @@ different thing from a marker that became the host of a link the response tells
 a browser to follow.
 
 So the two are reported as two different grades. A marker that reaches the host
-of an absolute URL, and does so again when the same probe is repeated, is
-confirmed: that is a link- or redirect-poisoning primitive. A marker that comes
-back only as text is suspected, and the finding says what would settle it.
+of a URL a browser would actually go to, and does so again when the same probe
+is repeated, is confirmed: that is a link- or redirect-poisoning primitive. A
+marker that comes back only as text is suspected, and the finding says what
+would settle it.
+
+What counts as a URL a browser would go to is deliberately narrow. A URL
+printed as text - "Requested https://host/" in a diagnostic page, a field in a
+JSON error - is not a destination, and neither is a ``Location`` on a response
+that is not a redirect. Counting either would confirm a primitive that does not
+exist, which is the distinction this check is built on.
 
 A marker that survives into a request that never carried the header is a cache
 poisoning, which is a stronger claim about a different weakness; the cache
@@ -26,24 +33,52 @@ from .base import BaseTest
 from .mutations import mutations_for
 from .wordlists import HOST_HEADERS
 
-# An absolute URL in a response, captured as far as its authority. Only the
-# authority matters here: a marker inside it may be the host a browser would
-# contact, while the same marker in the text beside the URL is just text.
-_ABSOLUTE_URL = re.compile(r"https?://([^/\s\"'<>)\]}]+)", re.I)
+# An absolute URL, bracketed IPv6 authority included. The brackets have to be
+# inside the match: without them the authority is truncated to something no
+# parser accepts.
+_URL = re.compile(r"https?://(?:\[[^\]\s]+\]|[^/\s\"'<>)\]}]+)[^\s\"'<>]*", re.I)
 
-SUSPECTED_NOTE = (
-    "Confirming this: the marker came back as text, not as the host of a URL, "
-    "so what is shown is that the application copies the header into its "
-    "output. To settle whether it routes on it, re-run with --oob <your-domain> "
-    "--oob-poll-url <export-url> - an interaction arriving at your own listener "
-    "proves the value was used to reach a host - and look at whether the same "
-    "header poisons a cache, which the cache checks in this scan report "
-    "separately."
+# A URL that something in the response points *at*: the value of an attribute
+# or parameter that names a destination. This is what separates a link from a
+# URL that happens to be printed on the page.
+_POINTS_AT = re.compile(
+    r"(?:href|src|action|url)\s*=\s*[\"']?\s*(" + _URL.pattern + r")", re.I)
+
+ECHO_NOTE = (
+    "Confirming this: the marker came back as text, not as the host of a URL "
+    "anything points at, so what is shown is that the application copies the "
+    "header into its output. To settle whether it routes on it, re-run with "
+    "--oob <your-domain> --oob-poll-url <export-url> - an interaction arriving "
+    "at your own listener proves the value was used to reach a host - and look "
+    "at whether the same header poisons a cache, which the cache checks in "
+    "this scan report separately."
+)
+
+UNREPRODUCED_NOTE = (
+    "Confirming this: the marker did reach the host of a URL this response "
+    "points at, but an identical second probe did not produce it again, so it "
+    "is reported as the one-off it so far is. Re-running shows whether it "
+    "recurs; --oob <your-domain> --oob-poll-url <export-url> settles whether "
+    "the value is used to reach a host at all."
 )
 
 # One reflection of one shape in one header.
 Reflection = namedtuple(
     "Reflection", "method header shape value url status_code places hosts")
+
+
+def _host_of(url):
+    """The host a browser would contact for this URL, or "" when it cannot.
+
+    A malformed authority is not a host anyone reaches, and it is never a
+    reason to stop the check: an unbracketed IPv6 address in an unrelated link
+    on the page used to abort the whole thing and discard every reflection it
+    had collected.
+    """
+    try:
+        return urlparse(url).hostname or ""
+    except ValueError:
+        return ""
 
 
 class HostInjectionTest(BaseTest):
@@ -57,6 +92,13 @@ class HostInjectionTest(BaseTest):
     """
 
     test_type = "Host Header Injection"
+
+    # A browser follows Location on these and ignores it on everything else,
+    # so a marker in a Location beside a 200 is not a redirect primitive.
+    REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
+
+    # Response headers whose value names somewhere to go.
+    POINTING_HEADERS = ("Link", "Refresh")
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -95,30 +137,37 @@ class HostInjectionTest(BaseTest):
 
     # -- probing -------------------------------------------------------------
 
-    def _marked_hosts(self, *texts):
-        """Hosts carrying the marker, taken from absolute URLs in the text.
+    def _destinations(self, response):
+        """Every URL in this response that a browser would actually go to."""
+        urls = []
+        if response.status_code in self.REDIRECT_CODES:
+            urls.extend(_URL.findall(response.headers.get("Location", "") or ""))
+        for name in self.POINTING_HEADERS:
+            urls.extend(_URL.findall(response.headers.get(name, "") or ""))
+        urls.extend(_POINTS_AT.findall(response.text or ""))
+        return urls
 
-        The marker has to be in the *host*, not merely somewhere in the
-        authority: in ``https://target@marker.example/`` a browser goes to the
-        target, so reporting that as attacker-controlled routing would be
-        exactly the over-claim this check exists to avoid.
+    def _marked_hosts(self, response):
+        """Hosts carrying the marker that this response points a browser at.
+
+        The marker has to be in the *host*, not merely somewhere in the URL: in
+        ``https://target@marker/`` a browser goes to the target, so reporting
+        that as attacker-controlled routing would be exactly the over-claim
+        this check exists to avoid.
         """
         hosts = []
-        for text in texts:
-            for authority in _ABSOLUTE_URL.findall(text or ""):
-                host = urlparse(f"http://{authority}").hostname or ""
-                if self.marker_token in host and host not in hosts:
-                    hosts.append(host)
+        for url in self._destinations(response):
+            host = _host_of(url)
+            if self.marker_token in host and host not in hosts:
+                hosts.append(host)
         return hosts
 
     def _reflection(self, method, header, shape, value, response):
         """Where this response carried the marker back, or None."""
-        location = response.headers.get("Location", "")
-        body = response.text or ""
         places = []
-        if self.marker_token in location:
+        if self.marker_token in (response.headers.get("Location", "") or ""):
             places.append("the 'Location' header")
-        if self.marker_token in body:
+        if self.marker_token in (response.text or ""):
             places.append("the response body")
         places.extend(
             f"the '{name}' header" for name, header_value in response.headers.items()
@@ -128,7 +177,7 @@ class HostInjectionTest(BaseTest):
         return Reflection(
             method=method, header=header, shape=shape, value=value,
             url=response.url, status_code=response.status_code,
-            places=places, hosts=self._marked_hosts(location, body))
+            places=places, hosts=self._marked_hosts(response))
 
     def worker(self, method, header_name, shape, value):
         response = self.request(method, headers={header_name: value},
@@ -163,8 +212,7 @@ class HostInjectionTest(BaseTest):
                                 allow_redirects=False)
         if response is None:
             return []
-        return self._marked_hosts(response.headers.get("Location", ""),
-                                  response.text or "")
+        return self._marked_hosts(response)
 
     # -- reporting -----------------------------------------------------------
 
@@ -181,34 +229,63 @@ class HostInjectionTest(BaseTest):
         shapes = ", ".join(sorted({hit.shape for hit in hits}))
         places = ", ".join(sorted({place for hit in hits
                                    for place in hit.places}))
-        routed = next((hit for hit in hits if hit.hosts), None)
+        # Worker threads finish in whatever order they finish in, so the
+        # candidates are ordered here: which shape gets re-probed first - and
+        # which one a downgraded finding is reported against - must not depend
+        # on the scheduler, or the same target grades differently twice.
+        routed = sorted((hit for hit in hits if hit.hosts),
+                        key=lambda hit: (hit.method, hit.shape))
 
-        if routed is not None:
-            hosts = self._holds_on_a_second_probe(routed)
-            if hosts:
-                self.record({
-                    "url": routed.url,
-                    "method": routed.method,
-                    "headers": {header: routed.value},
-                    "header_name": header,
-                    "payload": routed.value,
-                    "status_code": routed.status_code,
-                    "test_result": "Vulnerable",
-                    "confidence": CONFIDENCE_CONFIRMED,
-                    "analysis": (
-                        f"'{header}' decides a host this response hands a "
-                        f"browser: the marker came back as the host of an "
-                        f"absolute URL ({', '.join(hosts)}) in {places}, and "
-                        f"the same probe produced it again on a second "
-                        f"request. Shape(s) reflected: {shapes}."
-                    ),
-                })
-                return
+        # Every shape that reached a host gets its own second probe. Stopping
+        # at the first would downgrade a header whose stable shape happened to
+        # be collected second.
+        for hit in routed:
+            hosts = self._holds_on_a_second_probe(hit)
+            if not hosts:
+                continue
+            self.record({
+                "url": hit.url,
+                "method": hit.method,
+                "headers": {header: hit.value},
+                "header_name": header,
+                "payload": hit.value,
+                "status_code": hit.status_code,
+                "test_result": "Vulnerable",
+                "confidence": CONFIDENCE_CONFIRMED,
+                "analysis": (
+                    f"'{header}' decides a host this response points a browser "
+                    f"at: the marker came back as the host of a URL "
+                    f"({', '.join(hosts)}) in {places}, and the same probe "
+                    f"produced it again on a second request. Shape(s) "
+                    f"reflected: {shapes}."
+                ),
+            })
+            return
 
-        # Either nothing reached the host of a URL, or it did not hold the
-        # second time. Both are reflection, which is worth reporting and is not
-        # proof that the application routes on the header.
-        first = routed or hits[0]
+        if routed:
+            # It reached a host and did not do so again. Saying it never
+            # reached one would contradict what the scan actually saw.
+            seen = ", ".join(sorted({host for hit in routed
+                                     for host in hit.hosts}))
+            first = routed[0]
+            analysis = (
+                f"'{header}' produced a URL this response points a browser at "
+                f"whose host was the marker ({seen}), in {places} - but an "
+                f"identical second probe did not produce it again, so it is "
+                f"not reported as proof. Shape(s) reflected: {shapes}."
+            )
+            note = UNREPRODUCED_NOTE
+        else:
+            first = hits[0]
+            analysis = (
+                f"'{header}' is copied into the response: the marker came back "
+                f"in {places}. Nothing in the response points a browser at a "
+                f"URL whose host is the marker, so the application echoes the "
+                f"header rather than demonstrably routing, redirecting or "
+                f"building links on it. Shape(s) reflected: {shapes}."
+            )
+            note = ECHO_NOTE
+
         self.record({
             "url": first.url,
             "method": first.method,
@@ -218,12 +295,6 @@ class HostInjectionTest(BaseTest):
             "status_code": first.status_code,
             "severity": "Low",
             "confidence": CONFIDENCE_SUSPECTED,
-            "analysis": (
-                f"'{header}' is copied into the response: the marker came back "
-                f"in {places}. It is not the host of any absolute URL there, "
-                f"so the application echoes the header rather than "
-                f"demonstrably routing, redirecting or building links on it. "
-                f"Shape(s) reflected: {shapes}."
-            ),
-            "confirmation": SUSPECTED_NOTE,
+            "analysis": analysis,
+            "confirmation": note,
         })

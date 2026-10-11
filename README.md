@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-2.16.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-650%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-660%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -118,8 +118,8 @@ Method: GET
 Header: X-Forwarded-Host
 Payload: hh297aa83e0c90.example-collab.com
 Status Code: 302
-Analysis: 'X-Forwarded-Host' decides a host this response hands a browser: the marker
-came back as the host of an absolute URL (hh297aa83e0c90.example-collab.com) in the
+Analysis: 'X-Forwarded-Host' decides a host this response points a browser at: the
+marker came back as the host of a URL (hh297aa83e0c90.example-collab.com) in the
 'Location' header, and the same probe produced it again on a second request. Shape(s)
 reflected: appended to a list, plain, target as userinfo.
 Reproduce: curl -s -i -H 'X-Forwarded-Host: hh297aa83e0c90.example-collab.com' 'https://app.example.com/'
@@ -153,7 +153,7 @@ A header scanner earns its place by what it refuses to report. These are the rul
 
 | Class | What counts as proof |
 | ----- | -------------------- |
-| **Host header injection** | A unique per-request marker comes back as **the host of an absolute URL** — in `Location`, or in a link or form action in the body — and does so again when the same probe is repeated. That is a link- and redirect-poisoning primitive: a browser handed that response goes to a host the attacker chose. The marker merely echoed as *text* is reported too, as `suspected`, because it shows the application copies the header into its output and not that it routes on it. A marker in the userinfo of a URL whose host is the target (`https://target@marker/`) does not count: a browser goes to the target. |
+| **Host header injection** | A unique per-request marker comes back as **the host of a URL the response points a browser at** — a `Location` on a redirect status, a `Link` or `Refresh` header, or an `href`, `src`, `action` or `url=` in the body — and does so again when the same probe is repeated. That is a link- and redirect-poisoning primitive: a browser handed that response goes to a host the attacker chose. Three things deliberately do not count, because a browser does not act on any of them: a URL *printed* as text (`Requested https://marker/` in a diagnostic page, a field in a JSON error), a `Location` beside a non-redirect status, and a marker in the userinfo of a URL whose host is the target (`https://target@marker/`). Each is still reported, as `suspected`, which is what an echoed header is. |
 | **Web cache poisoning** | The poisoning request is sent through an unkeyed header, then the same URL is requested **without it**. Only a marker that survives into the second response — served from cache — is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context. |
 | **Web cache deception** | A page still served under a `.css` suffix is half of it. The same URL is then requested by a session carrying **no cookies and no authorization**; content only the logged-in session should have seen, coming back to an anonymous one, is a shared cache handing one user's page to another. A response that already says `no-store` or `private` is not reported at all — that control is working. |
 | **CRLF injection** | The injected header field is *named* after a unique per-scan marker, so a field carrying it cannot have come from anywhere else. A value merely echoed into `Location` is not reported. |
@@ -505,7 +505,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 650 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 660 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.

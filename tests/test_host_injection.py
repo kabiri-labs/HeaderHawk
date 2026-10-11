@@ -111,6 +111,68 @@ class RoutedTests(unittest.TestCase):
         self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
 
 
+class NavigableEvidenceTests(unittest.TestCase):
+    """Only a URL something points *at* is a destination."""
+
+    def _grade(self, **response):
+        check = _test(_reflecting(**response))
+        _probe(check)
+        check.report()
+        self.assertEqual(len(check.vulnerabilities_found), 1)
+        return check.vulnerabilities_found[0]
+
+    def test_a_url_printed_as_text_is_not_a_link(self):
+        # A diagnostic page that prints the URL it reconstructed is the most
+        # common shape of plain echo there is. Reading it as a link would
+        # confirm a primitive that does not exist.
+        finding = self._grade(
+            text=f"<pre>Requested https://{MARKER}/account</pre>")
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
+
+    def test_a_url_in_a_json_field_is_not_a_link(self):
+        finding = self._grade(text=f'{{"requested": "https://{MARKER}/"}}')
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
+
+    def test_a_form_action_is_a_link(self):
+        finding = self._grade(
+            text=f'<form action="https://{MARKER}/pay" method="post">')
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_CONFIRMED)
+
+    def test_a_meta_refresh_is_a_link(self):
+        finding = self._grade(
+            text=f'<meta http-equiv="refresh" content="0;url=https://{MARKER}/">')
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_CONFIRMED)
+
+    def test_a_location_on_a_redirect_is_a_link(self):
+        finding = self._grade(status_code=302,
+                              headers={"Location": f"https://{MARKER}/next"})
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_CONFIRMED)
+
+    def test_a_location_on_a_non_redirect_is_not(self):
+        # A browser does not follow Location beside a 200.
+        finding = self._grade(status_code=200,
+                              headers={"Location": f"https://{MARKER}/next"})
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
+
+
+class MalformedUrlTests(unittest.TestCase):
+    def test_an_unbracketed_ipv6_authority_does_not_stop_the_check(self):
+        # The authority regex used to stop at the closing bracket, and the
+        # truncated result made urlparse raise - which aborted the whole check
+        # and discarded every reflection it had collected.
+        check = _test(_reflecting(
+            text=f'<p>{MARKER}</p><a href="http://[2001:db8::1]/">peer</a>'))
+        _probe(check)
+        check.report()
+        self.assertEqual(len(check.vulnerabilities_found), 1)
+
+    def test_a_bracketed_ipv6_host_is_read_whole(self):
+        from headerhawk.checks.host_injection import _host_of
+
+        self.assertEqual(_host_of("http://[2001:db8::1]/"), "2001:db8::1")
+        self.assertEqual(_host_of("http://[not an address/"), "")
+
+
 class SecondProbeTests(unittest.TestCase):
     def test_a_host_that_does_not_come_back_twice_is_not_confirmed(self):
         # One response is an observation; the page may simply have been
@@ -126,6 +188,51 @@ class SecondProbeTests(unittest.TestCase):
         finding = check.vulnerabilities_found[0]
         self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
         self.assertEqual(answers, [])  # the second probe really was sent
+
+    def test_the_finding_does_not_deny_what_was_seen(self):
+        # It did reach a URL host once. An evidence line saying nothing
+        # pointed at the marker would contradict the scan's own observation.
+        answers = [
+            FakeResponse(url=f"https://{TARGET}/", status_code=302,
+                         headers={"Location": f"https://{MARKER}/next"}),
+            FakeResponse(url=f"https://{TARGET}/", text="nothing here now"),
+        ]
+        check = _test(lambda headers: answers.pop(0))
+        _probe(check)
+        check.report()
+        finding = check.vulnerabilities_found[0]
+        self.assertIn("did not produce it again", finding["analysis"])
+        self.assertIn(MARKER, finding["analysis"])
+        self.assertNotIn("Nothing in the response points", finding["analysis"])
+
+    def test_every_shape_that_reached_a_host_gets_its_own_probe(self):
+        # Workers finish in whatever order they finish in. If only the first
+        # candidate were retried, a header whose stable shape was collected
+        # second would be downgraded - differently from run to run.
+        listed = f"{TARGET}, {MARKER}"
+        seen = []
+
+        def responder(headers):
+            value = headers.get("X-Forwarded-Host", "")
+            seen.append(value)
+            # Both shapes redirect to the marker at first. The list shape then
+            # stops; the plain one keeps going. Sorted by shape, the list shape
+            # is re-probed first, so reaching the stable one takes a second
+            # attempt - which is the whole point.
+            if value == listed and seen.count(listed) > 1:
+                return FakeResponse(url=f"https://{TARGET}/", text="gone")
+            return FakeResponse(url=f"https://{TARGET}/", status_code=302,
+                                headers={"Location": f"https://{MARKER}/go"})
+
+        check = _test(responder)
+        # Collected in the order that used to decide the outcome: the transient
+        # shape first, so retrying only that one downgrades the header.
+        _probe(check, shape="appended to a list", value=listed)
+        _probe(check, shape="plain", value=MARKER)
+        check.report()
+        finding = check.vulnerabilities_found[0]
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_CONFIRMED)
+        self.assertEqual(finding["payload"], MARKER)
 
 
 class OneFindingPerHeaderTests(unittest.TestCase):
