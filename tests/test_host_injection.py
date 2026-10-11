@@ -267,6 +267,50 @@ class OneFindingPerHeaderTests(unittest.TestCase):
         self.assertEqual(check.vulnerabilities_found, [])
 
 
+class FindingTypeTests(unittest.TestCase):
+    """The Host header is not a header an intermediary set.
+
+    ASVS 4.1.3 is about a field "set by an intermediary layer" that the end
+    user must not be able to override. The client sets Host, by definition of
+    HTTP/1.1, so a finding about it cannot cite that requirement - and this
+    product reports a finding without a requirement rather than citing a
+    neighbouring one an assessor would challenge.
+    """
+
+    def _finding(self, header):
+        check = _test(_reflecting(text=f"echo {MARKER}"))
+        _probe(check, header=header)
+        check.report()
+        return check.vulnerabilities_found[0]
+
+    def test_the_host_header_gets_its_own_type(self):
+        finding = self._finding("Host")
+        self.assertEqual(finding["test_type"], "Host Header Poisoning")
+
+    def test_and_that_type_cites_no_requirement(self):
+        self.assertEqual(self._finding("Host")["controls"], [])
+        self.assertEqual(hhs.controls_for("Host Header Poisoning"), ())
+
+    def test_an_intermediary_header_keeps_the_requirement_that_covers_it(self):
+        finding = self._finding("X-Forwarded-Host")
+        self.assertEqual(finding["test_type"], "Host Header Injection")
+        self.assertEqual(finding["controls"], ["ASVS-5.0:4.1.3"])
+
+    def test_the_new_type_is_reported_rather_than_dropped(self):
+        # An unmapped finding renders at the end of the evidence report, which
+        # is the whole point of allowing one.
+        check = _test(_reflecting(text=f"echo {MARKER}"))
+        _probe(check, header="Host")
+        check.report()
+        self.assertEqual(len(hhs.unmapped_findings([check])), 1)
+
+    def test_both_types_are_declared_by_the_check(self):
+        # The severity and compliance maps are checked for completeness
+        # against what a check says it can emit.
+        self.assertEqual(set(hhs.HostInjectionTest.emitted_types()),
+                         {"Host Header Injection", "Host Header Poisoning"})
+
+
 class EndToEndTests(unittest.TestCase):
     """Driven through run(), so the shapes really are sent."""
 

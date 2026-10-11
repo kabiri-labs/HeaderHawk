@@ -93,6 +93,12 @@ class HostInjectionTest(BaseTest):
 
     test_type = "Host Header Injection"
 
+    # The Host header is not one an intermediary sets - the client sets it, by
+    # definition of HTTP/1.1 - so a finding about it cannot cite the
+    # requirement about overriding an intermediary's header. It gets its own
+    # type, and that type is deliberately unmapped. See compliance/mapping.py.
+    POISONING = "Host Header Poisoning"
+
     # A browser follows Location on these and ignores it on everything else,
     # so a marker in a Location beside a 200 is not a redirect primitive.
     REDIRECT_CODES = frozenset({301, 302, 303, 307, 308})
@@ -100,10 +106,18 @@ class HostInjectionTest(BaseTest):
     # Response headers whose value names somewhere to go.
     POINTING_HEADERS = ("Link", "Refresh")
 
+    @classmethod
+    def emitted_types(cls):
+        return (cls.test_type, cls.POISONING)
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.marker_token = None
         self._hits = []
+
+    def _type_for(self, header):
+        """Which finding type a header's reflection belongs to."""
+        return self.POISONING if header.lower() == "host" else self.test_type
 
     # -- what gets sent ------------------------------------------------------
 
@@ -244,6 +258,7 @@ class HostInjectionTest(BaseTest):
             if not hosts:
                 continue
             self.record({
+                "test_type": self._type_for(header),
                 "url": hit.url,
                 "method": hit.method,
                 "headers": {header: hit.value},
@@ -287,6 +302,7 @@ class HostInjectionTest(BaseTest):
             note = ECHO_NOTE
 
         self.record({
+            "test_type": self._type_for(header),
             "url": first.url,
             "method": first.method,
             "headers": {header: first.value},

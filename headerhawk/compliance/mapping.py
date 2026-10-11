@@ -9,8 +9,21 @@ from .catalogue import CONTROLS
 
 CONTROLS_BY_TEST = {
     # Injecting a routing header the front-end trusts is exactly the override
-    # 4.1.3 requires to be impossible.
+    # 4.1.3 requires to be impossible. The requirement names "a header field
+    # set by an intermediary layer", which is what X-Forwarded-Host and its
+    # family are.
     "Host Header Injection": ("ASVS-5.0:4.1.3",),
+    # The Host header is not one of them: the client sets it, by definition of
+    # HTTP/1.1, so there is nothing an intermediary set for the end user to
+    # override and 4.1.3 does not reach it. Poisoning a link or a reset email
+    # through Host has no catalogued requirement, so it is reported without
+    # one rather than citing a neighbouring id an assessor would challenge.
+    # When the poisoning takes the shape of a redirect it also fails 3.7.2,
+    # which the open-redirect check reports under that id.
+    "Host Header Poisoning": (),
+    # The bypass is a different claim about the same header: it defeats the
+    # validation the *front-end* performs, so what the end user overrides is
+    # the intermediary's own determination of the host. 4.1.3 reaches that.
     "Host Header Bypass": ("ASVS-5.0:4.1.3",),
     "Web Cache Poisoning": ("ASVS-5.0:4.1.3",),
     # The candidates are deliberately limited to header fields an
