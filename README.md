@@ -198,6 +198,33 @@ Two artefacts are records rather than views and always carry every finding whate
 
 The threshold applies to posture only. A proven vulnerability is reported at any band: a confirmed internal hostname is filed as `Low`, and an operator who asked for less noise did not ask for that. Three bands were recalibrated to match their real stakes rather than their appearance — a missing `Referrer-Policy` (every current browser already withholds the path and query cross-origin), a missing `Permissions-Policy` (no catalogued requirement covers it), and framing restricted only by `X-Frame-Options` (honoured by every browser still in support). Each is still reported, and each still fails its requirement in the evidence report; none of them now reads as something to fix today.
 
+### Checked against real servers, not only mocks
+
+The 709 offline tests answer one kind of question: given this response, does the check draw the right conclusion? They cannot answer the other kind, because a mock replies with whatever the test told it to — so an assumption about what a real server does that is wrong is wrong in the test too, and the test passes.
+
+`lab/` is a Docker lab that answers the other kind. Five containers: the application under test with a vulnerable route and a secure twin for each weakness, an nginx front-end that refuses an unknown host and owns the forwarding headers, Varnish with the cache key it ships with, the same Varnish with the header added to the key, and a cache whose key leaves the query string out. One command brings it up, scans every scenario with this CLI and these defaults, compares, and tears it down:
+
+```bash
+python lab/lab.py
+```
+
+What each scenario expects is written down in [`lab/scenarios.json`](lab/scenarios.json) before anything runs, and a scenario is **exhaustive** by default: every finding the scanner would show a user at the default threshold has to be one the scenario asked for, so an undeclared finding is a false positive rather than noise the lab tolerates. Absence is read from the per-control evidence report rather than guessed from an empty findings file, because a scan that found nothing and a scan that could not look produce the same file and the difference is the whole point.
+
+The current run — [`lab/report.md`](lab/report.md), 17 scenarios against HeaderHawk 2.19.0:
+
+| | |
+| --- | --- |
+| Declared findings produced as declared | 34 |
+| Declared absences that held | 36 |
+| Declared and not produced | 1 |
+| Reported to a user and declared by nothing | 3 |
+
+The three it gets wrong are named in the report with the evidence to reproduce each one: `Host Header Bypass` is reported at `High` whenever the marker host comes back, without first establishing that anything was refusing an unknown host — on a target that validates nothing there was no refusal to get past; and `Web Cache Deception` reads a front-end that answers every URL with the same `403` as a router ignoring five static-looking suffixes, which it is, except that an identical refusal served to everyone is not a victim's page.
+
+The one it does not report is the one worth reading. Behind a cache that ignores the query string the unkeyed search correctly refuses to guess — and the reason reaches nobody: the console says `No vulnerabilities were found.`, the findings file is empty, and the evidence report files ASVS-5.0:4.1.3 as **Pass** on the strength of the four checks that did run. `skip(reason)` is carried into the evidence only for a control left with no assessor at all, so a control assessed by some checks and blocked for others loses the fact that anybody was blind. That is the erosion this tool exists not to have, and the lab found it in one run.
+
+None of the three is fixed by the lab itself, and none of them will be: a lab that edits the scanner to make its own scenarios pass is not evidence of anything. Each is its own change, with its own test and its own scenario proving it.
+
 ---
 
 ## Coverage
@@ -501,16 +528,19 @@ headerhawk/
 └── report/                # JSON, SARIF and Markdown rendering
 ```
 
+`tests/` holds the offline suite. `lab/` holds the Docker integration lab — the application, the proxies, the caches, the declared expectations and the runner; `python -m unittest discover -s tests` does not touch it, and the suite stays offline. See [`lab/README.md`](lab/README.md).
+
 ### Adding a detection module
 
 Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that type to `SEVERITY_BY_TEST` in `core/severity.py`, and register the class in `checks/registry.py`. Also give it an entry in `compliance/mapping.py` — an empty tuple is a valid answer, but **the decision may not be skipped**; a test enforces it.
 
 ### House rules
 
-Two of them carry most of the weight:
+Three of them carry most of the weight:
 
 1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 709 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
+3. **A detection claim is checked against a real server.** A change to what a check concludes gets a scenario in `lab/scenarios.json`, with what it should report and what it should not, and `python lab/lab.py` run against it. The lab is never edited to make the scanner pass.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.
 

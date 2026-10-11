@@ -1,0 +1,4 @@
+# Everything here is read by a Linux container. CRLF would reach a config
+# parser and a Python interpreter inside the image, so the working tree keeps
+# LF on every platform regardless of core.autocrlf.
+* text eol=lf

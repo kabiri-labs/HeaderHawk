@@ -1,0 +1,97 @@
+# An integration lab for HeaderHawk: real servers, real caches, real wire.
+#
+# Nothing is published. The network is internal, so these deliberately
+# vulnerable services have no route to or from anywhere - not the host, not
+# the internet - and the only thing that can reach them is the runner
+# container on the same network. That is a stronger statement than binding to
+# localhost, and it is also why the service names work as hostnames: Docker's
+# own resolver gives the scan real hosts to send a Host header about, with no
+# hosts file to edit.
+
+name: headerhawk-lab
+
+services:
+  # The application under test: vulnerable routes and their secure twins.
+  app:
+    image: python:3.12-slim
+    command: ["python", "/srv/server.py"]
+    volumes:
+      - ./app:/srv:ro
+    networks:
+      lab:
+        aliases: [app.lab]
+    restart: unless-stopped
+
+  # A front-end that validates the host and owns the forwarding headers.
+  proxy:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./proxy/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      lab:
+        aliases: [allowed.lab, other.lab]
+    depends_on: [app]
+    restart: unless-stopped
+
+  # A cache with the default key: the poisoning gadget as deployed.
+  cache:
+    image: varnish:7.5
+    volumes:
+      - ./cache/open.vcl:/etc/varnish/default.vcl:ro
+    environment:
+      VARNISH_SIZE: 32M
+    # Varnish needs its working directory to allow execution and to be
+    # writable by its own user, which is uid 1000 in this image.
+    tmpfs:
+      - /var/lib/varnish:exec,uid=1000,gid=1000
+    networks: [lab]
+    depends_on: [app]
+    restart: unless-stopped
+
+  # The same cache with the header in the key: the fix.
+  cache-keyed:
+    image: varnish:7.5
+    volumes:
+      - ./cache/keyed.vcl:/etc/varnish/default.vcl:ro
+    environment:
+      VARNISH_SIZE: 32M
+    tmpfs:
+      - /var/lib/varnish:exec,uid=1000,gid=1000
+    networks: [lab]
+    depends_on: [app]
+    restart: unless-stopped
+
+  # A cache that ignores the query string, which makes a search blind.
+  querycache:
+    image: nginx:1.27-alpine
+    volumes:
+      - ./querycache/nginx.conf:/etc/nginx/nginx.conf:ro
+    tmpfs:
+      - /tmp
+    networks: [lab]
+    depends_on: [app]
+    restart: unless-stopped
+
+  # The scanner. The source is mounted read-only, so a working tree is scanned
+  # without rebuilding, and the image cannot be used to change it.
+  runner:
+    build:
+      context: ..
+      dockerfile: lab/runner/Dockerfile
+    # In a profile, so "compose up" brings up the servers and waits for them
+    # without also starting the scan. "compose run runner" starts it.
+    profiles: ["runner"]
+    volumes:
+      - ..:/hh:ro
+      - ./out:/out
+    working_dir: /hh
+    environment:
+      LAB_ONLY: ${LAB_ONLY:-}
+    networks: [lab]
+    depends_on: [app, proxy, cache, cache-keyed, querycache]
+    command: ["python", "/hh/lab/run.py"]
+
+networks:
+  lab:
+    driver: bridge
+    internal: true
