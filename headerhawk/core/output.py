@@ -4,7 +4,8 @@ from colorama import Fore, Style
 
 from .baseline import describe_drift
 from .findings import (CLASS_POSTURE, CLASS_VULNERABILITY, CONFIDENCE_ORDER,
-                       confidence_of, count_by_class, count_by_confidence)
+                       DEFAULT_MIN_SEVERITY, confidence_of, count_by_class,
+                       count_by_confidence, reportable, suppressed_count)
 
 # Suppresses progress/status chatter (set from --quiet / non-TTY detection).
 # Findings and the final summary are never suppressed - only the noise around
@@ -39,9 +40,11 @@ def is_quiet():
     return _QUIET
 
 
-def print_summary(all_tests, targets, stats, drift=None, scan_mode=None):
+def print_summary(all_tests, targets, stats, drift=None, scan_mode=None,
+                  min_severity=DEFAULT_MIN_SEVERITY):
     """Print the aggregate summary and return the total finding count."""
     total_vulns = sum(len(test.vulnerabilities_found) for test in all_tests)
+    quietened = suppressed_count(all_tests, min_severity)
     scanned = len({test.target_url for test in all_tests})
     print(Fore.CYAN + Style.BRIGHT + "\n========== Test Summary ==========")
     print(Fore.CYAN + f"Targets scanned: {scanned}/{len(targets)}")
@@ -60,12 +63,19 @@ def print_summary(all_tests, targets, stats, drift=None, scan_mode=None):
         print(Fore.CYAN + "Evidence: " + ", ".join(
             f"{grades[name]} {name}" for name in CONFIDENCE_ORDER
             if grades.get(name)))
+    if quietened:
+        # Never silent about its own silence: a count, and where to read them.
+        print(Fore.CYAN + f"Not shown: {quietened} posture finding(s) below "
+                          f"--min-severity {min_severity} (the compliance "
+                          f"evidence report lists every one)")
     if drift is not None:
         print(Fore.CYAN + f"Against baseline: {describe_drift(drift)}")
 
     by_type = {}
     for test in all_tests:
         for vuln in test.vulnerabilities_found:
+            if not reportable(vuln, min_severity):
+                continue
             by_type.setdefault(test.test_type, []).append(vuln)
     for test_type, vulns in by_type.items():
         print(Fore.MAGENTA + Style.BRIGHT + f"\n--- {test_type} ---")

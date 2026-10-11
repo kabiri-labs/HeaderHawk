@@ -7,13 +7,15 @@ work it out. See ``catalogue`` for the controls and ``mapping`` for the wiring.
 
 from .catalogue import ASVS, CONTROLS, Control, describe
 from .evidence import (STATUS_FAIL, STATUS_NOT_ASSESSED, STATUS_PASS,
-                       ControlResult, build_evidence, controls_covered_by,
+                       ControlResult, build_evidence, controls_assessed_by,
+                       controls_covered_by, controls_unassessed_by,
                        unmapped_findings)
 from .mapping import CONTROLS_BY_TEST, controls_for
 
 __all__ = ["ASVS", "CONTROLS", "CONTROLS_BY_TEST", "Control", "ControlResult",
            "STATUS_FAIL", "STATUS_NOT_ASSESSED", "STATUS_PASS",
-           "build_evidence", "controls_covered_by", "controls_for",
+           "build_evidence", "controls_assessed_by", "controls_covered_by",
+           "controls_unassessed_by", "controls_for",
            "describe", "unmapped_findings"]
 
 

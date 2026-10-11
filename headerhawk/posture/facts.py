@@ -41,3 +41,38 @@ class ResponseFacts:
     def header(self, name):
         """Case-insensitive header lookup, returning None when absent."""
         return self.headers.get(name.lower())
+
+    @property
+    def media_type(self):
+        """The response's media type, lower-cased and without parameters."""
+        value = self.header("content-type") or ""
+        return value.split(";", 1)[0].strip().lower()
+
+    @property
+    def is_document(self):
+        """Whether a browser would render this response as a document.
+
+        The browser security controls - framing, referrer, script sources,
+        opener isolation, feature permissions - all act on a document. A JSON
+        or binary response has none of those to constrain.
+
+        An SVG counts. Navigated to directly rather than drawn by an <img>,
+        it is an active document: script inside it runs, a Content-Security-
+        Policy applies to it, and it can be framed.
+
+        A response with no media type at all counts too: a browser may sniff
+        one, which is exactly the case X-Content-Type-Options exists for, and
+        assessing it is the safe direction to be wrong in.
+
+        text/plain does not. A text document has no links to send a referrer
+        from, no script for a policy to constrain, and framing one is not
+        clickjacking anything. Neither does XML: XSLT makes the risk non-zero,
+        but XML is what a great many APIs answer with, and assessing the
+        document controls against every SOAP reply would bring back exactly
+        the noise this distinction exists to remove.
+        """
+        media_type = self.media_type
+        if not media_type:
+            return True
+        return media_type in ("text/html", "application/xhtml+xml",
+                              "image/svg+xml")

@@ -36,11 +36,20 @@ class ResponseHeaderPostureTest(BaseTest):
         facts = ResponseFacts.from_response(response, self.target_url)
 
         for rule in RULES:
+            if rule.documents_only and not facts.is_document:
+                # Not a weakness and not a pass: there is no document for the
+                # control to act on, so the requirements it covers are reported
+                # as unassessed with this reason rather than either.
+                self.skip_type(
+                    rule.test_type,
+                    f"the response is {facts.media_type}, not a document a "
+                    f"browser renders, so this control had nothing to act on")
+                continue
             for issue in rule.assess(facts):
                 self.record({
                     "test_type": rule.test_type,
                     "test_result": issue.test_result,
-                    "severity": rule.severity,
+                    "severity": issue.severity or rule.severity,
                     "url": facts.url,
                     "method": "GET",
                     "header_name": issue.subject,
