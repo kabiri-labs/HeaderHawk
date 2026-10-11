@@ -1,13 +1,13 @@
 """Out-of-band interaction management and confirmation."""
 
 import time
-import uuid
 
 import requests
 from colorama import Fore, Style
 
 from ..compliance import controls_for
 from .findings import CLASS_VULNERABILITY, CONFIDENCE_CONFIRMED
+from .markers import new_token
 from .severity import severity_for
 
 OOB_TEST_TYPE = "Blind SSRF (OOB)"
@@ -31,7 +31,7 @@ class OOBManager:
     def __init__(self, oob_domain, poll_url=None):
         self.oob_domain = oob_domain.strip("/").lstrip(".")
         self.poll_url = poll_url
-        self.scan_id = uuid.uuid4().hex[:8]
+        self.scan_id = new_token(8)
         self.labels = {}
 
     def host(self, label):

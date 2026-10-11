@@ -1,10 +1,10 @@
 """Host validation bypasses that require raw, un-normalised HTTP."""
 
-import uuid
 from urllib.parse import urlparse
 
 from .._meta import __tool_name__, __version__
 from ..net.raw import RawHTTPClient
+from ..core.markers import new_token
 from ..core.request_file import header_lines
 from ..core.scope import SCOPE_HOST
 from .base import BaseTest
@@ -103,7 +103,7 @@ class HostBypassTest(BaseTest):
         if not self.connect_host:
             self.skip("the target URL has no hostname to connect to")
             return
-        token = uuid.uuid4().hex[:12]
+        token = new_token()
         marker = f"{token}.example-collab.com"
         self.marker_token = token
         cases = [(name, line, headers)

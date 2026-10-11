@@ -2,10 +2,10 @@
 
 import re
 import statistics
-import uuid
 
 from colorama import Fore
 
+from ..core.markers import new_token
 from ..core.scope import SCOPE_HOST
 from .base import BaseTest
 from .wordlists import DEFAULT_VHOST_WORDLIST
@@ -42,7 +42,7 @@ class VhostDiscoveryTest(BaseTest):
 
     def run(self):
         candidates = self.wordlist or DEFAULT_VHOST_WORDLIST
-        bogus = f"{uuid.uuid4().hex[:16]}.invalid"
+        bogus = f"{new_token(16)}.invalid"
         samples = [m for m in (self._measure(bogus)
                                for _ in range(self.BASELINE_SAMPLES))
                    if m is not None]

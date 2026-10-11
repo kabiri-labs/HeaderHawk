@@ -10,9 +10,9 @@ seeing it echoed back in `Access-Control-Allow-Origin` proves the server
 accepted an origin that cannot exist rather than merely suggesting it.
 """
 
-import uuid
 from urllib.parse import urlparse
 
+from ..core.markers import new_token
 from .base import BaseTest
 
 ALLOW_ORIGIN = "Access-Control-Allow-Origin"
@@ -41,7 +41,7 @@ class CORSTest(BaseTest):
         super().__init__(*args, **kwargs)
         parsed = urlparse(self.target_url)
         self.scheme = (parsed.scheme or "http").lower()
-        self.token = uuid.uuid4().hex[:12]
+        self.token = new_token()
         self._wildcard_reported = False
 
     def probe(self, origin):

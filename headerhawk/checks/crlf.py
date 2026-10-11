@@ -16,9 +16,9 @@ Nothing is left on a connection and no other user's traffic is affected, so this
 check needs no opt-in.
 """
 
-import uuid
 from urllib.parse import parse_qs, urlencode, urlparse
 
+from ..core.markers import new_token
 from .base import BaseTest
 
 # Request headers an application is most likely to decode and copy into a
@@ -50,7 +50,7 @@ class CRLFInjectionTest(BaseTest):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        self.token = uuid.uuid4().hex[:12]
+        self.token = new_token()
         self.marker = f"X-HeaderHawk-{self.token}"
         self._reported = set()
 

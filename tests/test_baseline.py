@@ -101,6 +101,68 @@ class IdentityDiscriminationTests(unittest.TestCase):
                             finding_identity(_finding(url="https://b/")))
 
 
+class MarkerFoldingTests(unittest.TestCase):
+    """Only the scanner's own tokens may be folded out of an identity.
+
+    Folding every long run of hexadecimal also folded values that mean
+    something - a virtual host named in hex, an identifier in a path - filing
+    two distinct findings under one identity. The tokens the scanner mints
+    carry a prefix so they can be told apart from everything else.
+    """
+
+    def test_a_minted_token_says_who_made_it(self):
+        token = hhs.new_token()
+        self.assertTrue(token.startswith(hhs.MARKER_PREFIX))
+        self.assertNotEqual(token, hhs.new_token())
+
+    def test_the_scanners_own_token_is_folded(self):
+        first = _finding(payload=f"{hhs.new_token()}.example-collab.com")
+        second = _finding(payload=f"{hhs.new_token()}.example-collab.com")
+        self.assertEqual(finding_identity(first), finding_identity(second))
+
+    def test_a_cache_buster_in_the_url_is_folded(self):
+        first = _finding(url=f"https://t/?cb={hhs.new_token(10)}")
+        second = _finding(url=f"https://t/?cb={hhs.new_token(10)}")
+        self.assertEqual(finding_identity(first), finding_identity(second))
+
+    def test_two_virtual_hosts_named_in_hex_stay_apart(self):
+        # The case the shape-based fold collapsed.
+        self.assertNotEqual(
+            finding_identity(_finding("Virtual Host Discovery",
+                                      header_name="Host", payload="deadbeef")),
+            finding_identity(_finding("Virtual Host Discovery",
+                                      header_name="Host", payload="cafebabe")))
+
+    def test_two_urls_differing_only_by_a_hex_segment_stay_apart(self):
+        self.assertNotEqual(
+            finding_identity(_finding(url="https://t/u/4f1c9ab2e7/profile")),
+            finding_identity(_finding(url="https://t/u/77d0c9e4a1/profile")))
+
+    def test_a_baseline_from_an_earlier_version_still_matches(self):
+        # Those earlier markers carried no prefix. Their shapes are folded by
+        # the context the scanner put them in, so a team's accepted findings
+        # do not all look new the first time they scan with this version.
+        for legacy, current in (
+                ("9c1d4ba7f3e2.example-collab.com",
+                 f"{hhs.new_token()}.example-collab.com"),
+                ("X-HeaderHawk-9c1d4ba7f3e2",
+                 f"X-HeaderHawk-{hhs.new_token()}"),
+        ):
+            self.assertEqual(finding_identity(_finding(payload=legacy)),
+                             finding_identity(_finding(payload=current)),
+                             legacy)
+
+    def test_a_baseline_url_from_an_earlier_version_still_matches(self):
+        self.assertEqual(
+            finding_identity(_finding(url="https://t/?cb=4f1c9ab2e7")),
+            finding_identity(_finding(url=f"https://t/?cb={hhs.new_token(10)}")))
+
+    def test_an_internal_host_is_never_folded(self):
+        self.assertNotEqual(
+            finding_identity(_finding("SSRF", payload="169.254.169.254")),
+            finding_identity(_finding("SSRF", payload="127.0.0.1")))
+
+
 class CompareTests(unittest.TestCase):
     def test_unchanged_findings_are_not_new(self):
         current = [_finding(payload="aaaaaaaaaaaa.example-collab.com")]

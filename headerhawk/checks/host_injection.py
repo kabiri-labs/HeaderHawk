@@ -1,7 +1,6 @@
 """Reflection-based Host header injection."""
 
-import uuid
-
+from ..core.markers import new_token
 from .base import BaseTest
 from .wordlists import HOST_HEADERS
 
@@ -17,7 +16,7 @@ class HostInjectionTest(BaseTest):
     test_type = "Host Header Injection"
 
     def generate_markers(self):
-        token = uuid.uuid4().hex[:12]
+        token = new_token()
         marker = f"{token}.example-collab.com"
         markers = {marker}
         # Common bypass shapes that still carry the marker.
