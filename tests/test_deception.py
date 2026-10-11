@@ -99,6 +99,51 @@ class PathConfusionTests(unittest.TestCase):
         self.assertIn("no page to compare", test.skip_reason)
 
 
+class ServedAPageTests(unittest.TestCase):
+    """An identical refusal served to everyone is not a victim's page.
+
+    Every URL on a front-end that answers one status answers it for all five
+    suffixes at once, so "the router ignored the suffix" is satisfied by
+    something that has nothing in it to hand to the next requester.
+    """
+
+    @staticmethod
+    def _uniform(status, body="Forbidden"):
+        def responder(url, authenticated):
+            return FakeResponse(status, text=body, url=url)
+        return responder
+
+    def test_a_front_end_that_forbids_everything_is_not_a_gadget(self):
+        test = _run(self._uniform(403))
+        self.assertEqual(test.vulnerabilities_found, [])
+
+    def test_the_refusal_is_reported_as_unassessed_not_as_a_pass(self):
+        test = _run(self._uniform(403))
+        self.assertFalse(test.assessed)
+        self.assertIn("403", test.skip_reason)
+        self.assertIn("nothing a shared cache could store", test.skip_reason)
+
+    def test_a_server_error_everywhere_is_not_a_gadget_either(self):
+        test = _run(self._uniform(500))
+        self.assertEqual(test.vulnerabilities_found, [])
+        self.assertFalse(test.assessed)
+
+    def test_a_uniform_redirect_is_not_a_gadget(self):
+        # Its body is empty or boilerplate, so two of them compare equal under
+        # the tolerant comparison for the same reason two error pages do.
+        test = _run(self._uniform(302, body=""))
+        self.assertEqual(test.vulnerabilities_found, [])
+        self.assertIn("302", test.skip_reason)
+
+    def test_the_bar_is_a_2xx_and_nothing_else(self):
+        test = _make(_app(confuses_router=True, caches=False))
+        for status in (200, 201, 204, 299):
+            self.assertTrue(test._served_a_page(FakeResponse(status)), status)
+        for status in (301, 302, 304, 400, 403, 404, 500):
+            self.assertFalse(test._served_a_page(FakeResponse(status)), status)
+        self.assertFalse(test._served_a_page(None))
+
+
 class ConfirmationTests(unittest.TestCase):
     def test_a_stranger_served_the_private_page_is_confirmed(self):
         responder = _app(confuses_router=True, caches=True)

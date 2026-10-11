@@ -5,10 +5,18 @@ router ignores the suffix and serves the victim's account page; the CDN sees a
 `.css` and files it as a public static asset. The attacker then asks for the
 same URL and is handed the victim's page out of the cache.
 
-Two things have to be true, and they are checked separately. The router has to
-ignore the suffix - otherwise the URL is a 404 and nothing follows. And a shared
-cache has to store the result, which is what turns one victim's page into
-everyone's.
+Three things have to be true, and they are checked separately. There has to be a
+page: the gadget hands the next requester what the victim was served, and an
+error carries nothing of the victim's to hand over. The router has to ignore the
+suffix - otherwise the URL is a 404 and nothing follows. And a shared cache has
+to store the result, which is what turns one victim's page into everyone's.
+
+The first is the one that is easy to leave out, and leaving it out is how a
+front-end answering every URL with the same 403 reads as a router ignoring five
+suffixes: it is ignoring them, but an identical refusal served to everyone is
+not a victim's page. The bar is a 2xx and nothing else. A redirect does not
+qualify either - its body is empty or boilerplate, so two of them compare equal
+under the tolerant comparison below for the same reason two error pages do.
 
 The second is proved rather than inferred where it can be: the same URL is
 requested again from a session carrying no credentials at all. Content that only
@@ -98,6 +106,17 @@ class CacheDeceptionTest(BaseTest):
             yield label, parsed._replace(
                 path=template.format(path=path), query="").geturl()
 
+    @staticmethod
+    def _served_a_page(response):
+        """Whether this response is a page a cache could hand to someone else.
+
+        A 2xx and nothing else. An error is the same refusal for everybody and
+        has nothing of the victim's in it; a redirect carries no page either,
+        and an empty body would satisfy the tolerant comparison below against
+        any other empty body.
+        """
+        return response is not None and 200 <= response.status_code < 300
+
     def _same_page(self, response, other):
         """Whether two live responses render the same document.
 
@@ -153,6 +172,14 @@ class CacheDeceptionTest(BaseTest):
             self.skip("the target did not answer, so there was no page to "
                       "compare a deceptive URL against")
             return
+        if not self._served_a_page(self.baseline):
+            # Nothing was served that a cache could hand to the next
+            # requester, so whether this route is a deception gadget was not
+            # assessed here rather than found to be safe.
+            self.skip(f"the target answered {self.baseline.status_code} rather "
+                      f"than serving a page, so there was nothing a shared "
+                      f"cache could store and hand to another requester")
+            return
         # What a stranger sees at the ordinary URL. Used to tell "the cache gave
         # away the logged-in page" apart from "this page is public anyway".
         anonymous_normal = self._anonymous_get(self.target_url)
@@ -160,6 +187,8 @@ class CacheDeceptionTest(BaseTest):
         storable = []
         for label, url in self.deceptive_urls():
             confused = self.request("GET", url=url, allow_redirects=False)
+            # ``_same_page`` requires the same status as the baseline, which
+            # was a 2xx to get here, so the bar above carries to every variant.
             if not self._same_page(confused, self.baseline):
                 continue  # the router did not ignore the suffix; nothing follows
             if self.confirm(label, url, confused, anonymous_normal):
