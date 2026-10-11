@@ -204,8 +204,13 @@ class UnkeyedInputTest(BaseTest):
                     continue
                 if name.lower() in COUNTER_HEADERS:
                     # A count, not a word: "X-Cache-Hits: 1" says exactly
-                    # what "X-Cache: HIT" says.
-                    if value.isdigit() and int(value) > 0:
+                    # what "X-Cache: HIT" says. A cache with more than one
+                    # tier sends one count per tier, comma-joined, and so
+                    # does the client library when two of them set the same
+                    # header - so each part is read, and any positive one is
+                    # a hit from whichever tier it came.
+                    if any(part.strip().isdigit() and int(part) > 0
+                           for part in value.split(",")):
                         return name, value
                 elif _CACHE_HIT.search(value):
                     return name, value

@@ -387,6 +387,23 @@ class CacheKeyTests(unittest.TestCase):
         test = _make(self._cached_regardless("X-Cache-Hits", "0"))
         self.assertTrue(test.learn_baseline())
 
+    def test_one_tier_of_several_reporting_a_hit_counts(self):
+        # A cache with more than one tier sends a count per tier, and so does
+        # the client library when two of them set the same header. Reading the
+        # whole field as one number rejected it and the search went on blind.
+        test = _make(self._cached_regardless("X-Cache-Hits", "0, 1"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+
+    def test_every_tier_reporting_a_miss_is_still_a_miss(self):
+        test = _make(self._cached_regardless("X-Cache-Hits", "0, 0"))
+        self.assertTrue(test.learn_baseline())
+
+    def test_a_comma_joined_age_counts_too(self):
+        test = _make(self._cached_regardless("Age", "0, 41"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+
     def test_an_age_above_zero_counts_as_a_hit(self):
         test = _make(self._cached_regardless("Age", "41"))
         self.assertFalse(test.learn_baseline())
