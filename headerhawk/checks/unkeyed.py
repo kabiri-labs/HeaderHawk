@@ -55,7 +55,15 @@ CANONICAL_HEADERS = ("Location", "Content-Type", "Content-Language", "Link",
 # request ids, build hashes. Ordinary words are left alone, so masking them
 # cannot hide the small change this check exists to find - "example" in a
 # hostname survives, "nonce00000004" does not.
-_TOKENISH = re.compile(r"[A-Za-z0-9_+/=-]{6,}")
+_TOKENISH = re.compile(r"[A-Za-z0-9_-]{6,}")
+
+# How far back the text before a token is read, to say where in the
+# response it sits. Digit runs in that window are flattened, because what
+# sits before a moving token is often another moving token -
+# "?ts=1760140801&rid=" - and the context has to survive that to be worth
+# matching on.
+_CONTEXT = 32
+_DIGITS = re.compile(r"\d+")
 
 # How long a run has to be, while mixing letters and digits, before it reads as
 # generated rather than written. The baseline can only show which values a page
@@ -75,6 +83,10 @@ _COOKIE_DOMAIN = re.compile(r"domain\s*=\s*([^;,\s]+)", re.I)
 
 # A cache saying it answered from its store.
 _CACHE_HIT = re.compile(r"\bhit\b", re.I)
+
+# Cache headers whose value is a count rather than a word. Nothing in one
+# of them matches "hit", and a positive one says the same thing.
+COUNTER_HEADERS = frozenset({"age", "x-cache-hits"})
 
 
 class UnkeyedInputTest(BaseTest):
@@ -108,7 +120,7 @@ class UnkeyedInputTest(BaseTest):
         # reproduce itself, and the reason the length tolerance is still here.
         self.baseline_artefact = None
         self._volatile = frozenset()
-        self._volatile_shapes = frozenset()
+        self._volatile_contexts = frozenset()
 
     # -- baseline ------------------------------------------------------------
 
@@ -161,8 +173,9 @@ class UnkeyedInputTest(BaseTest):
                 f"result would mean only that the search was blind")
             return False
 
-        self._volatile, self._volatile_shapes = self._learn_volatile(
-            [sample.text or "" for sample in samples])
+        self._volatile, self._volatile_contexts = self._learn_volatile(
+            [fold_tokens(self._artefact_source(sample))
+             for sample in samples])
         artefacts = {self._artefact(sample) for sample in samples}
         self.baseline_artefact = artefacts.pop() if len(artefacts) == 1 else None
         return True
@@ -180,7 +193,9 @@ class UnkeyedInputTest(BaseTest):
                 value = str(response.headers.get(name, "") or "").strip()
                 if not value:
                     continue
-                if name.lower() == "age":
+                if name.lower() in COUNTER_HEADERS:
+                    # A count, not a word: "X-Cache-Hits: 1" says exactly
+                    # what "X-Cache: HIT" says.
                     if value.isdigit() and int(value) > 0:
                         return name, value
                 elif _CACHE_HIT.search(value):
@@ -198,54 +213,81 @@ class UnkeyedInputTest(BaseTest):
         return "".join(kinds)
 
     @classmethod
-    def _learn_volatile(cls, bodies):
-        """What the page moves between two identical requests.
+    def _context_of(cls, text, start):
+        """Where in the response a token sits: the text just before it."""
+        return _DIGITS.sub("#", text[max(0, start - _CONTEXT):start])
 
-        Returns the values seen moving and the shapes they had. The values
-        alone are not enough: a page carrying a Unix timestamp shows three of
-        them while it is sampled and a fourth on the next request, and masking
-        only the three leaves every candidate header looking like it changed
-        the response.
+    @classmethod
+    def _learn_volatile(cls, sources):
+        """What moves between two identical requests, and where it moves.
 
-        A shape is only generalised when it contains a run of digits. Every
-        kind of noise worth masking has one - timestamps, request ids, build
-        numbers, counters - and an all-letter shape would otherwise mask most
-        of the words on the page.
+        Returns the values seen moving and the (context, shape) pairs they were
+        seen in.
+
+        The values alone are not enough: a page carrying a Unix timestamp shows
+        three of them while it is sampled and a fourth on the next request, and
+        masking only the three leaves every candidate header looking like it
+        changed the response.
+
+        The shape alone is too much. A timestamp would teach that every run of
+        digits anywhere is noise, and a candidate whose only effect is changing
+        an account id in a URL would be masked along with it - the search would
+        go quiet about the very gadget it exists to find. So a shape is
+        generalised only in the place it was seen moving, and only when it
+        contains a run of digits: every kind of noise worth masking has one,
+        and an all-letter shape would otherwise mask most of the words on the
+        page.
         """
-        seen = [set(_TOKENISH.findall(body)) for body in bodies]
+        seen = [set(_TOKENISH.findall(source)) for source in sources]
         if not seen:
             return frozenset(), frozenset()
         values = frozenset(set.union(*seen) - set.intersection(*seen))
-        shapes = frozenset(shape for shape in map(cls._shape_of, values)
-                           if "d" in shape)
-        return values, shapes
+        contexts = set()
+        for source in sources:
+            for match in _TOKENISH.finditer(source):
+                shape = cls._shape_of(match.group(0))
+                if match.group(0) in values and "d" in shape:
+                    contexts.add((cls._context_of(source, match.start()), shape))
+        return values, frozenset(contexts)
 
-    def _artefact(self, response):
-        """A hash of what this response is, with the page's own noise removed.
+    def _artefact_source(self, response):
+        """Everything the artefact is built from, before any masking.
 
         What a cache gadget changes is a URL in the page, a Link header, a form
-        action - twenty bytes that a length comparison cannot see. What a page
-        changes by itself is a nonce or a request id, which is what the learned
-        volatile tokens and the marker folding take out.
+        action - twenty bytes that a length comparison cannot see. Volatility is
+        learned from this whole string rather than from the body alone: a
+        rotating id in one of these headers would otherwise stop the baseline
+        samples agreeing, and the comparison would fall back to body length on
+        exactly the targets it is meant to read precisely.
         """
-        parts = [str(response.status_code), self._mask(response.text or "")]
+        parts = [str(response.status_code), response.text or ""]
         for name in CANONICAL_HEADERS:
-            parts.append(f"{name}={self._mask(response.headers.get(name, '') or '')}")
+            parts.append(f"{name}={response.headers.get(name, '') or ''}")
         domains = _COOKIE_DOMAIN.findall(
             str(response.headers.get("Set-Cookie", "") or ""))
         parts.append("cookie-domain=" + ",".join(sorted(set(domains))))
-        return hashlib.sha1("|".join(parts).encode("utf-8", "ignore")).hexdigest()
+        return "|".join(parts)
+
+    def _artefact(self, response):
+        """A hash of what this response is, with the page's own noise removed."""
+        masked = self._mask(self._artefact_source(response))
+        return hashlib.sha1(masked.encode("utf-8", "ignore")).hexdigest()
 
     def _mask(self, text):
         """The text with the page's own noise taken out, and nothing else."""
+        text = fold_tokens(text)
+
         def replace(match):
             token = match.group(0)
             if token in self._volatile:
                 # Seen to move between two identical requests.
                 return ""
-            if self._shape_of(token) in self._volatile_shapes:
-                # The next value of something the baseline saw moving: a
-                # timestamp one second later, the request id after this one.
+            if (self._context_of(text, match.start()),
+                    self._shape_of(token)) in self._volatile_contexts:
+                # The next value of something the baseline saw moving in this
+                # same place: a timestamp one second later, the request id
+                # after this one. The same shape elsewhere in the response is
+                # left alone, because there it may be the thing that changed.
                 return ""
             if (len(token) >= _GENERATED_LENGTH
                     and any(char.isdigit() for char in token)
@@ -254,7 +296,7 @@ class UnkeyedInputTest(BaseTest):
                 # carry a different one whether or not the baseline saw it.
                 return ""
             return token
-        return _TOKENISH.sub(replace, fold_tokens(text))
+        return _TOKENISH.sub(replace, text)
 
     def _reflects_marker(self, response):
         if self.token in (response.text or ""):

@@ -359,6 +359,18 @@ class CacheKeyTests(unittest.TestCase):
         self.assertIn("not part of its key", test.skip_reason)
         self.assertIn("X-Cache", test.skip_reason)
 
+    def test_a_hit_counter_above_zero_counts_as_a_hit(self):
+        # "X-Cache-Hits: 1" is in the cache-status list and contains no word
+        # to match, so it used to read as a miss and the search went on blind.
+        test = _make(self._cached_regardless("X-Cache-Hits", "1"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+        self.assertIn("X-Cache-Hits", test.skip_reason)
+
+    def test_a_hit_counter_of_zero_is_not_a_hit(self):
+        test = _make(self._cached_regardless("X-Cache-Hits", "0"))
+        self.assertTrue(test.learn_baseline())
+
     def test_an_age_above_zero_counts_as_a_hit(self):
         test = _make(self._cached_regardless("Age", "41"))
         self.assertFalse(test.learn_baseline())
@@ -402,10 +414,11 @@ class NoiseTests(unittest.TestCase):
         self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
         self.assertEqual(test.isolate(list(INTERMEDIARY_HEADERS)), [])
 
-    def test_the_shape_is_what_generalises(self):
-        test = _make(self._ticking('<html>home {value}</html>'))
+    def test_the_shape_is_learned_where_it_was_seen(self):
+        test = _make(self._ticking('<html>home <span id="ts">{value}</span></html>'))
         test.learn_baseline()
-        self.assertIn("d", test._volatile_shapes)
+        self.assertTrue(any(shape == "d"
+                            for _, shape in test._volatile_contexts))
 
     def test_a_counter_with_a_prefix_generalises_too(self):
         test = _make(self._ticking('<html>home req{value}</html>'))
@@ -415,14 +428,48 @@ class NoiseTests(unittest.TestCase):
     def test_an_all_letter_shape_is_not_generalised(self):
         # Masking every word-shaped run because one of them moved would mask
         # most of the page, and with it the change this check looks for.
-        words = ["alpha", "bravo", "charlie", "delta"]
+        words = ["alphaaa", "bravooo", "charlie", "deltaaa"]
 
         def responder(url, headers):
-            return _page(f"<html>home {words.pop(0) if words else 'echo'}</html>")
+            return _page(f"<html>home {words.pop(0) if words else 'echoooo'}</html>")
 
         test = _make(responder)
         test.learn_baseline()
-        self.assertEqual(test._volatile_shapes, frozenset())
+        self.assertEqual(test._volatile_contexts, frozenset())
+
+    def test_noise_in_one_place_does_not_mask_the_same_shape_elsewhere(self):
+        # The defect a shape learned globally would cause: a timestamp teaches
+        # that digits are noise, and a candidate whose only effect is changing
+        # an account id in a URL is discarded with it.
+        clock = [1760140800]
+
+        def responder(url, headers):
+            clock[0] += 1
+            moved = any(k.lower() == "x-forwarded-host" for k in headers)
+            account = "87654321" if moved else "12345678"
+            return _page(f'<html><a href="/account/{account}">acct</a>'
+                         f'<span id="ts">{clock[0]}</span></html>')
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_noise_in_a_canonical_header_does_not_blind_the_comparison(self):
+        # Volatility is learned from everything the artefact hashes. Learning
+        # it from the body alone left the samples disagreeing whenever one of
+        # those headers rotated, and the comparison fell back to body length.
+        build = [0]
+
+        def responder(url, headers):
+            build[0] += 1
+            return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                headers={"Link": f"<https://cdn/b{build[0]:08d}/a.js>; rel=preload"})
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
 
 
 class DeployTests(unittest.TestCase):
