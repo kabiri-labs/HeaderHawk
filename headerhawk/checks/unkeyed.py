@@ -13,19 +13,62 @@ Only header fields an intermediary sets are candidates. That is where cache
 holes actually live, and it is also what makes the finding mean something: the
 requirement being verified is that a header set by a load balancer or proxy
 cannot be overridden by the end user.
+
+Two things decide whether this search can see anything at all.
+
+**What is sent.** A candidate carries a value of the shape it really holds - a
+scheme header gets a scheme, a port header gets a port - because a hostname in
+a header that means something else is ignored or rejected, and the header then
+reads as "changes nothing" for a reason that has nothing to do with the
+application. See ``candidates``.
+
+**What counts as a change.** A cache gadget changes a URL in the page, a Link
+header, a hidden form action. It does not change the page's weight, so a
+comparison that waits for the body length to move misses the whole class. What
+is compared is a canonical artefact: the body with the page's own noise taken
+out, its status, and the response headers a cache or a browser acts on. The
+length tolerance is still there for a page that will not reproduce itself, when
+nothing more precise is possible.
 """
 
+import hashlib
+import re
 from urllib.parse import parse_qs, urlencode, urlparse
 
-from ..core.markers import new_token
+from ..core.markers import fold_tokens, new_token
 from ..core.scope import SCOPE_ENDPOINT
 from .base import BaseTest
+from .candidates import candidate_value
 from .wordlists import CACHE_STATUS_HEADERS, INTERMEDIARY_HEADERS
 
 # Statuses that mean "that request was too big or too odd", not "that header
 # changed something". Treating a rejected batch as a signal would send the
 # bisection chasing a header that did nothing.
 REJECTION_STATUSES = {400, 413, 414, 431, 494, 502}
+
+# Response headers a cache or a browser acts on, so a change in one of them is
+# a change in what the response *is* rather than in how it reads.
+CANONICAL_HEADERS = ("Location", "Content-Type", "Content-Language", "Link",
+                     "Refresh", "Vary")
+
+# Long-ish runs are where a page's own noise lives: nonces, CSRF tokens,
+# request ids, build hashes. Ordinary words are left alone, so masking them
+# cannot hide the small change this check exists to find - "example" in a
+# hostname survives, "nonce00000004" does not.
+_TOKENISH = re.compile(r"[A-Za-z0-9_+/=-]{6,}")
+
+# How long a run has to be, while mixing letters and digits, before it reads as
+# generated rather than written. The baseline can only show which values a page
+# used while it was being sampled, never which one it will use on the next
+# request, so the shape has to be masked and not just the values seen.
+_GENERATED_LENGTH = 10
+
+# The one cookie attribute worth comparing: a gadget that widens it hands the
+# cookie to every subdomain. The value itself is a session id and never stable.
+_COOKIE_DOMAIN = re.compile(r"domain\s*=\s*([^;,\s]+)", re.I)
+
+# A cache saying it answered from its store.
+_CACHE_HIT = re.compile(r"\bhit\b", re.I)
 
 
 class UnkeyedInputTest(BaseTest):
@@ -54,6 +97,11 @@ class UnkeyedInputTest(BaseTest):
         self.baseline_statuses = set()
         self.baseline_lengths = []
         self.length_tolerance = self.MIN_LENGTH_DELTA
+        # The artefact every baseline sample agreed on, or None when they did
+        # not agree - which is the only honest answer for a page that will not
+        # reproduce itself, and the reason the length tolerance is still here.
+        self.baseline_artefact = None
+        self._volatile = frozenset()
 
     # -- baseline ------------------------------------------------------------
 
@@ -72,25 +120,104 @@ class UnkeyedInputTest(BaseTest):
         return parsed._replace(query=urlencode(query, doseq=True)).geturl()
 
     def learn_baseline(self):
-        """Sample the target repeatedly to learn how much it varies on its own.
+        """Sample the target repeatedly to learn how it behaves on its own.
 
         Without this, any page carrying a timestamp or a nonce reports every
-        candidate header as significant.
+        candidate header as significant. Returns False when the search cannot
+        go ahead, having already said why.
         """
+        samples = []
         for _ in range(self.BASELINE_SAMPLES):
             response = self.request("GET", url=self._busted_url(),
                                     allow_redirects=False)
             if response is None:
                 continue
+            samples.append(response)
             self.baseline_statuses.add(response.status_code)
             self.baseline_lengths.append(len(response.content or b""))
-        if not self.baseline_lengths:
+        if not samples:
             return False
+
         spread = max(self.baseline_lengths) - min(self.baseline_lengths)
         # Tolerate the variance the page shows by itself, doubled, and never
         # less than a fixed floor.
         self.length_tolerance = max(self.MIN_LENGTH_DELTA, spread * 2)
+
+        served_from_cache = self._served_from_cache(samples)
+        if served_from_cache:
+            name, value = served_from_cache
+            self.skip(
+                f"a cache answered a URL this scan had just invented "
+                f"('{name}: {value}'), so the query string is not part of its "
+                f"key: a cache-buster cannot tell one probe from another here, "
+                f"every candidate would read as changing nothing, and a clean "
+                f"result would mean only that the search was blind")
+            return False
+
+        self._volatile = self._learn_volatile([s.text or "" for s in samples])
+        artefacts = {self._artefact(sample) for sample in samples}
+        self.baseline_artefact = artefacts.pop() if len(artefacts) == 1 else None
         return True
+
+    def _served_from_cache(self, samples):
+        """A cache header saying one of these came from a store, or None.
+
+        Each baseline probe carries a cache-buster no one has asked for before,
+        so every one of them must be a miss. A hit means the query is not in
+        the key, and the whole search is about to be answered by the cache with
+        one stored response.
+        """
+        for response in samples:
+            for name in CACHE_STATUS_HEADERS:
+                value = str(response.headers.get(name, "") or "").strip()
+                if not value:
+                    continue
+                if name.lower() == "age":
+                    if value.isdigit() and int(value) > 0:
+                        return name, value
+                elif _CACHE_HIT.search(value):
+                    return name, value
+        return None
+
+    @staticmethod
+    def _learn_volatile(bodies):
+        """Tokens that are not in every sample, so the page moves them itself."""
+        seen = [set(_TOKENISH.findall(body)) for body in bodies]
+        if not seen:
+            return frozenset()
+        return frozenset(set.union(*seen) - set.intersection(*seen))
+
+    def _artefact(self, response):
+        """A hash of what this response is, with the page's own noise removed.
+
+        What a cache gadget changes is a URL in the page, a Link header, a form
+        action - twenty bytes that a length comparison cannot see. What a page
+        changes by itself is a nonce or a request id, which is what the learned
+        volatile tokens and the marker folding take out.
+        """
+        parts = [str(response.status_code), self._mask(response.text or "")]
+        for name in CANONICAL_HEADERS:
+            parts.append(f"{name}={self._mask(response.headers.get(name, '') or '')}")
+        domains = _COOKIE_DOMAIN.findall(
+            str(response.headers.get("Set-Cookie", "") or ""))
+        parts.append("cookie-domain=" + ",".join(sorted(set(domains))))
+        return hashlib.sha1("|".join(parts).encode("utf-8", "ignore")).hexdigest()
+
+    def _mask(self, text):
+        """The text with the page's own noise taken out, and nothing else."""
+        def replace(match):
+            token = match.group(0)
+            if token in self._volatile:
+                # Seen to move between two identical requests.
+                return ""
+            if (len(token) >= _GENERATED_LENGTH
+                    and any(char.isdigit() for char in token)
+                    and any(char.isalpha() for char in token)):
+                # Shaped like something generated, so the next request will
+                # carry a different one whether or not the baseline saw it.
+                return ""
+            return token
+        return _TOKENISH.sub(replace, fold_tokens(text))
 
     def _reflects_marker(self, response):
         if self.token in (response.text or ""):
@@ -105,19 +232,33 @@ class UnkeyedInputTest(BaseTest):
         if response.status_code not in self.baseline_statuses:
             return True, (f"the status changed to {response.status_code} "
                           f"(baseline {sorted(self.baseline_statuses)})")
+        if self.baseline_artefact is not None:
+            if self._artefact(response) != self.baseline_artefact:
+                return True, ("the response changed in a way a cache key built "
+                              "from the method, host, path and query does not "
+                              "capture")
+            return False, ""
+        # The page would not reproduce itself across the baseline samples, so
+        # only a difference larger than its own variance means anything.
         length = len(response.content or b"")
         low, high = min(self.baseline_lengths), max(self.baseline_lengths)
         if length < low - self.length_tolerance or length > high + self.length_tolerance:
             return True, (f"the body length moved to {length} bytes "
-                          f"(baseline {low}-{high})")
+                          f"(baseline {low}-{high}; the page does not "
+                          f"reproduce itself, so only a change this large "
+                          f"means anything)")
         return False, ""
 
     # -- probing -------------------------------------------------------------
 
+    def _values_for(self, names):
+        """What to send in each of these headers."""
+        return {name: candidate_value(name, self.marker) for name in names}
+
     def _send(self, names, url=None):
-        headers = {name: self.marker for name in names}
         return self.request("GET", url=url or self._busted_url(),
-                            headers=headers, allow_redirects=False)
+                            headers=self._values_for(names),
+                            allow_redirects=False)
 
     def _batch_rejected(self, response):
         return (response.status_code in REJECTION_STATUSES
@@ -158,31 +299,53 @@ class UnkeyedInputTest(BaseTest):
     def confirm_poisoning(self, name):
         """Poison a cache-busted URL through the header, then ask for it clean.
 
-        Only a marker that survives into a request that never carried the
-        header proves the response was filed under a key the header is not
-        part of.
+        There are two ways to see that the cache handed the poisoned copy to a
+        request that never carried the header. The marker is the stronger one,
+        where the header's value can hold it: a value minted for this scan
+        cannot have come from anywhere else.
+
+        Where it cannot - a scheme, a port, an address - what is compared is
+        the artefact. The clean request has to come back as the poisoned
+        response rather than as the baseline. That needs a page that reproduces
+        itself, and it is what lets those headers be confirmed at all; before
+        it, a header with no room for a marker could never be more than
+        suspected.
         """
         # One buster shared by both requests: the point is to ask whether
         # the cache hands the poisoned copy to a request that never sent
         # the header, which only works when both ask for the same key.
         url = self._busted_url()
         poisoned = self._send([name], url=url)
-        if poisoned is None or not self._reflects_marker(poisoned):
+        if poisoned is None:
             return None
+        marked = self._reflects_marker(poisoned)
+        artefact = self._artefact(poisoned)
+        if not marked:
+            if self.baseline_artefact is None or artefact == self.baseline_artefact:
+                # Nothing was stored that differs from what a clean request
+                # would have been given anyway.
+                return None
         clean = self.request("GET", url=url, allow_redirects=False)
-        if clean is None or not self._reflects_marker(clean):
+        if clean is None:
+            return None
+        if marked:
+            if not self._reflects_marker(clean):
+                return None
+        elif self._artefact(clean) != artefact:
             return None
         cache_info = {header: clean.headers[header]
                       for header in CACHE_STATUS_HEADERS
                       if header in clean.headers}
-        return url, clean, cache_info
+        return url, clean, cache_info, marked
 
     # -- entry point ---------------------------------------------------------
 
     def run(self):
         if not self.learn_baseline():
-            self.skip("the target did not answer the baseline requests, so "
-                      "there was nothing to compare candidate headers against")
+            if not self.skipped:
+                self.skip("the target did not answer the baseline requests, so "
+                          "there was nothing to compare candidate headers "
+                          "against")
             return
 
         candidates = list(INTERMEDIARY_HEADERS)
@@ -197,24 +360,28 @@ class UnkeyedInputTest(BaseTest):
                 self.report(name, reason)
 
     def report(self, name, reason):
+        value = candidate_value(name, self.marker)
         confirmed = self.confirm_poisoning(name)
         if confirmed:
-            url, clean, cache_info = confirmed
+            url, clean, cache_info, marked = confirmed
+            proof = ("the poisoned response was served to a request that never "
+                     "carried the header" if marked else
+                     "a request that never carried the header was answered "
+                     "with the poisoned response rather than the baseline one")
             self.record({
                 "test_type": self.POISONING,
                 "test_result": "Vulnerable",
                 "severity": "High",
                 "url": url,
                 "method": "GET",
-                "headers": {name: self.marker},
+                "headers": {name: value},
                 "header_name": name,
-                "payload": self.marker,
+                "payload": value,
                 "status_code": clean.status_code,
                 "analysis": (
                     f"'{name}' was found by search rather than from a fixed "
-                    f"list, and is unkeyed: the poisoned response was served "
-                    f"to a request that never carried the header. Cache "
-                    f"headers: {cache_info or 'n/a'}."
+                    f"list, and is unkeyed: {proof}. Cache headers: "
+                    f"{cache_info or 'n/a'}."
                 ),
             })
             return
@@ -224,9 +391,9 @@ class UnkeyedInputTest(BaseTest):
             "severity": "Medium",
             "url": self.target_url,
             "method": "GET",
-            "headers": {name: self.marker},
+            "headers": {name: value},
             "header_name": name,
-            "payload": self.marker,
+            "payload": value,
             "status_code": "n/a",
             "analysis": (
                 f"'{name}' changes the response - {reason} - so the "

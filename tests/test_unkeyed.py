@@ -113,8 +113,13 @@ class DiffTests(unittest.TestCase):
     def test_a_body_far_outside_the_baseline_counts(self):
         self.assertTrue(self.test.differs(_page("x" * 5000))[0])
 
-    def test_a_body_within_tolerance_does_not(self):
-        self.assertFalse(self.test.differs(_page("<html>home!</html>"))[0])
+    def test_an_identical_body_does_not(self):
+        self.assertFalse(self.test.differs(_page("<html>home</html>"))[0])
+
+    def test_a_small_change_counts_on_a_page_that_reproduces_itself(self):
+        # The whole point of comparing an artefact rather than a length: a
+        # cache gadget changes a URL, not the page's weight.
+        self.assertTrue(self.test.differs(_page("<html>home!</html>"))[0])
 
 
 class IsolationTests(unittest.TestCase):
@@ -231,6 +236,147 @@ class ReportingTests(unittest.TestCase):
     def test_the_reproduction_carries_the_header(self):
         found = self._run(_honours(["X-Forwarded-Scheme"], cached=False))
         self.assertIn("-H 'X-Forwarded-Scheme:", found[0]["repro"])
+
+
+class ArtefactTests(unittest.TestCase):
+    """What counts as a change, and what is the page moving on its own."""
+
+    CANONICAL = '<link rel="canonical" href="https://aa.example/x">'
+    POISONED = '<link rel="canonical" href="https://bb.example/x">'
+
+    def _page_with(self, extra=""):
+        return f"<html><head>{self.CANONICAL}</head><body>home{extra}</body></html>"
+
+    def test_a_url_that_changes_without_changing_the_length_is_found(self):
+        # Identical byte counts, so no length comparison could ever see it.
+        self.assertEqual(len(self.CANONICAL), len(self.POISONED))
+        baseline = self._page_with()
+        poisoned = baseline.replace(self.CANONICAL, self.POISONED)
+        self.assertEqual(len(baseline), len(poisoned))
+
+        test = _make(lambda url, headers: _page(
+            poisoned if any(k.lower() == "x-forwarded-host" for k in headers)
+            else baseline))
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        moved, reason = test.affects(["X-Forwarded-Host"])
+        self.assertTrue(moved)
+        self.assertIn("cache key", reason)
+
+    def test_a_change_only_in_a_response_header_is_found(self):
+        def responder(url, headers):
+            if any(k.lower() == "x-forwarded-host" for k in headers):
+                return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                    headers={"Link": "<https://bb.example/>; rel=preload"})
+            return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                headers={"Link": "<https://aa.example/>; rel=preload"})
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_nonce_the_page_changes_by_itself_is_not_a_change(self):
+        counter = [0]
+
+        def responder(url, headers):
+            counter[0] += 1
+            return _page(f'<html><meta nonce="nonce{counter[0]:08d}">home</html>')
+
+        test = _make(responder)
+        test.learn_baseline()
+        # The samples agreed once the nonce was folded out, so the precise
+        # comparison is in use - and the nonce still does not trip it.
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_page_that_will_not_reproduce_itself_falls_back(self):
+        counter = [0]
+
+        def responder(url, headers):
+            counter[0] += 1
+            # A different amount of content every time, not just a token.
+            return _page("<html>home" + ("spam " * counter[0] * 40) + "</html>")
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNone(test.baseline_artefact)
+        # With no artefact to compare, only a difference beyond the page's own
+        # variance means anything - the behaviour this check always had.
+        self.assertFalse(test.differs(_page("<html>home!</html>"))[0])
+
+
+class TypedValueTests(unittest.TestCase):
+    """A candidate has to carry a value of the shape it really holds."""
+
+    def test_a_scheme_header_is_sent_a_scheme(self):
+        test = _make(_honours([]))
+        values = test._values_for(["X-Forwarded-Proto", "X-Forwarded-Port",
+                                   "True-Client-IP", "X-Forwarded-Host"])
+        self.assertEqual(values["X-Forwarded-Proto"], "http")
+        self.assertEqual(values["X-Forwarded-Port"], "8080")
+        self.assertNotIn(".example-collab.com", values["True-Client-IP"])
+        self.assertEqual(values["X-Forwarded-Host"], test.marker)
+
+    def test_a_path_header_carries_the_marker_in_a_path(self):
+        test = _make(_honours([]))
+        value = test._values_for(["X-Original-URL"])["X-Original-URL"]
+        self.assertTrue(value.startswith("/"))
+        self.assertIn(test.marker, value)
+
+    def test_a_header_with_no_room_for_a_marker_can_still_be_confirmed(self):
+        # The value is "http", so there is no marker to look for: the clean
+        # request has to come back as the poisoned response instead. Before
+        # this, such a header could never be more than suspected.
+        test = _make(_honours(["X-Forwarded-Proto"], cached=True))
+        test.learn_baseline()
+        confirmed = test.confirm_poisoning("X-Forwarded-Proto")
+        self.assertIsNotNone(confirmed)
+        self.assertFalse(confirmed[3])          # not by the marker
+        found = test.vulnerabilities_found
+        test.report("X-Forwarded-Proto", "the response changed")
+        self.assertEqual(test.vulnerabilities_found[-1]["test_type"],
+                         "Web Cache Poisoning")
+        self.assertIn("rather than the baseline one",
+                      test.vulnerabilities_found[-1]["analysis"])
+
+
+class CacheKeyTests(unittest.TestCase):
+    """A cache that ignores the query makes the whole search blind."""
+
+    def _cached_regardless(self, header, value):
+        def responder(url, headers):
+            # The same stored response whatever the URL asks for.
+            return FakeResponse(200, text="<html>home</html>", url=BASE,
+                                headers={header: value})
+        return responder
+
+    def test_a_hit_on_an_invented_url_stops_the_search(self):
+        test = _make(self._cached_regardless("X-Cache", "HIT"))
+        self.assertFalse(test.learn_baseline())
+        self.assertTrue(test.skipped)
+        self.assertIn("not part of its key", test.skip_reason)
+        self.assertIn("X-Cache", test.skip_reason)
+
+    def test_an_age_above_zero_counts_as_a_hit(self):
+        test = _make(self._cached_regardless("Age", "41"))
+        self.assertFalse(test.learn_baseline())
+        self.assertIn("not part of its key", test.skip_reason)
+
+    def test_a_miss_is_not_mistaken_for_one(self):
+        test = _make(self._cached_regardless("X-Cache", "MISS"))
+        self.assertTrue(test.learn_baseline())
+
+    def test_an_age_of_zero_is_not_a_hit(self):
+        test = _make(self._cached_regardless("Age", "0"))
+        self.assertTrue(test.learn_baseline())
+
+    def test_the_run_reports_the_reason_rather_than_a_clean_result(self):
+        # A clean result here would mean only that the search was blind.
+        test = _make(self._cached_regardless("CF-Cache-Status", "HIT"))
+        test.run()
+        self.assertEqual(test.vulnerabilities_found, [])
+        self.assertFalse(test.assessed)
+        self.assertIn("not part of its key", test.skip_reason)
 
 
 class CandidateTests(unittest.TestCase):

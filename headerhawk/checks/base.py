@@ -139,6 +139,11 @@ class BaseTest:
         self._skip_reason = reason
 
     @property
+    def skipped(self):
+        """Whether this check has already said it could not judge something."""
+        return self._skip_reason is not None
+
+    @property
     def assessed(self):
         """True when the check got far enough to judge the controls it covers."""
         return self._skip_reason is None and self._requests_ok > 0
