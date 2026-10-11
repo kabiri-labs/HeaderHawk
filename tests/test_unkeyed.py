@@ -196,14 +196,16 @@ class CacheBustingTests(unittest.TestCase):
 
     def test_the_confirmation_pair_shares_one_buster(self):
         # The opposite requirement: proving a cache serves the poisoned copy
-        # only works when both requests ask for the same key.
+        # only works when both requests ask for the same key. The control that
+        # follows them is the one request that must not share it.
         test = _make(_honours(["X-Forwarded-Scheme"], cached=True))
         test.learn_baseline()
         before = len(test.session.calls)
         test.confirm_poisoning("X-Forwarded-Scheme")
         busters = self._busters(test.session.calls[before:])
-        self.assertEqual(len(busters), 2)
+        self.assertEqual(len(busters), 3)
         self.assertEqual(busters[0], busters[1])
+        self.assertNotIn(busters[2], busters[:2])
 
 
 class ReportingTests(unittest.TestCase):
@@ -377,6 +379,85 @@ class CacheKeyTests(unittest.TestCase):
         self.assertEqual(test.vulnerabilities_found, [])
         self.assertFalse(test.assessed)
         self.assertIn("not part of its key", test.skip_reason)
+
+
+class NoiseTests(unittest.TestCase):
+    """What the page moves by itself must not read as what a header moved."""
+
+    def _ticking(self, template):
+        clock = [1760140800]
+
+        def responder(url, headers):
+            clock[0] += 1
+            return _page(template.format(value=clock[0]))
+        return responder
+
+    def test_a_timestamp_does_not_make_every_candidate_look_significant(self):
+        # The baseline can only enumerate the values a page used while it was
+        # sampled. The next request carries one it never saw, and masking only
+        # the three seen left every candidate header looking significant.
+        test = _make(self._ticking('<html>home <span>{value}</span></html>'))
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+        self.assertEqual(test.isolate(list(INTERMEDIARY_HEADERS)), [])
+
+    def test_the_shape_is_what_generalises(self):
+        test = _make(self._ticking('<html>home {value}</html>'))
+        test.learn_baseline()
+        self.assertIn("d", test._volatile_shapes)
+
+    def test_a_counter_with_a_prefix_generalises_too(self):
+        test = _make(self._ticking('<html>home req{value}</html>'))
+        test.learn_baseline()
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_an_all_letter_shape_is_not_generalised(self):
+        # Masking every word-shaped run because one of them moved would mask
+        # most of the page, and with it the change this check looks for.
+        words = ["alpha", "bravo", "charlie", "delta"]
+
+        def responder(url, headers):
+            return _page(f"<html>home {words.pop(0) if words else 'echo'}</html>")
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertEqual(test._volatile_shapes, frozenset())
+
+
+class DeployTests(unittest.TestCase):
+    """A page that changes globally is not a cache serving a poisoned copy."""
+
+    @staticmethod
+    def _deploys_after_baseline(samples):
+        state = {"served": 0}
+
+        def responder(url, headers):
+            state["served"] += 1
+            if state["served"] <= samples:
+                return _page("<html>home v1</html>")
+            return _page("<html>home v2 with rather more words in it</html>")
+        return responder
+
+    def test_a_global_change_is_not_a_confirmed_poisoning(self):
+        # Poisoned and clean both come back as v2, which differs from the v1
+        # baseline, and no cache is involved anywhere.
+        test = _make(self._deploys_after_baseline(UnkeyedInputTest.BASELINE_SAMPLES))
+        test.learn_baseline()
+        self.assertIsNone(test.confirm_poisoning("X-Forwarded-Scheme"))
+
+    def test_and_the_run_reports_it_as_unconfirmed_instead(self):
+        test = _make(self._deploys_after_baseline(UnkeyedInputTest.BASELINE_SAMPLES))
+        test.run()
+        for finding in test.vulnerabilities_found:
+            self.assertEqual(finding["test_type"], "Unkeyed Input")
+
+    def test_a_real_cache_still_confirms(self):
+        # The control asks for a key the cache has never been asked for, so it
+        # comes back clean while the poisoned key does not.
+        test = _make(_honours(["X-Forwarded-Scheme"], cached=True))
+        test.learn_baseline()
+        self.assertIsNotNone(test.confirm_poisoning("X-Forwarded-Scheme"))
 
 
 class CandidateTests(unittest.TestCase):

@@ -63,6 +63,12 @@ _TOKENISH = re.compile(r"[A-Za-z0-9_+/=-]{6,}")
 # request, so the shape has to be masked and not just the values seen.
 _GENERATED_LENGTH = 10
 
+# The runs a token is made of, used to describe its shape: "1760140803" is one
+# run of digits, "nonce00000004" is letters then digits. A timestamp that moves
+# on every request is not a value the baseline can enumerate, but it is a shape
+# the baseline can recognise.
+_RUNS = re.compile(r"\d+|[A-Za-z]+|[^A-Za-z0-9]+")
+
 # The one cookie attribute worth comparing: a gadget that widens it hands the
 # cookie to every subdomain. The value itself is a session id and never stable.
 _COOKIE_DOMAIN = re.compile(r"domain\s*=\s*([^;,\s]+)", re.I)
@@ -102,6 +108,7 @@ class UnkeyedInputTest(BaseTest):
         # reproduce itself, and the reason the length tolerance is still here.
         self.baseline_artefact = None
         self._volatile = frozenset()
+        self._volatile_shapes = frozenset()
 
     # -- baseline ------------------------------------------------------------
 
@@ -154,7 +161,8 @@ class UnkeyedInputTest(BaseTest):
                 f"result would mean only that the search was blind")
             return False
 
-        self._volatile = self._learn_volatile([s.text or "" for s in samples])
+        self._volatile, self._volatile_shapes = self._learn_volatile(
+            [sample.text or "" for sample in samples])
         artefacts = {self._artefact(sample) for sample in samples}
         self.baseline_artefact = artefacts.pop() if len(artefacts) == 1 else None
         return True
@@ -180,12 +188,37 @@ class UnkeyedInputTest(BaseTest):
         return None
 
     @staticmethod
-    def _learn_volatile(bodies):
-        """Tokens that are not in every sample, so the page moves them itself."""
+    def _shape_of(token):
+        """A token's shape: which kinds of run it is made of, in order."""
+        kinds = []
+        for run in _RUNS.findall(token):
+            kind = "d" if run[0].isdigit() else "a" if run[0].isalpha() else "x"
+            if not kinds or kinds[-1] != kind:
+                kinds.append(kind)
+        return "".join(kinds)
+
+    @classmethod
+    def _learn_volatile(cls, bodies):
+        """What the page moves between two identical requests.
+
+        Returns the values seen moving and the shapes they had. The values
+        alone are not enough: a page carrying a Unix timestamp shows three of
+        them while it is sampled and a fourth on the next request, and masking
+        only the three leaves every candidate header looking like it changed
+        the response.
+
+        A shape is only generalised when it contains a run of digits. Every
+        kind of noise worth masking has one - timestamps, request ids, build
+        numbers, counters - and an all-letter shape would otherwise mask most
+        of the words on the page.
+        """
         seen = [set(_TOKENISH.findall(body)) for body in bodies]
         if not seen:
-            return frozenset()
-        return frozenset(set.union(*seen) - set.intersection(*seen))
+            return frozenset(), frozenset()
+        values = frozenset(set.union(*seen) - set.intersection(*seen))
+        shapes = frozenset(shape for shape in map(cls._shape_of, values)
+                           if "d" in shape)
+        return values, shapes
 
     def _artefact(self, response):
         """A hash of what this response is, with the page's own noise removed.
@@ -209,6 +242,10 @@ class UnkeyedInputTest(BaseTest):
             token = match.group(0)
             if token in self._volatile:
                 # Seen to move between two identical requests.
+                return ""
+            if self._shape_of(token) in self._volatile_shapes:
+                # The next value of something the baseline saw moving: a
+                # timestamp one second later, the request id after this one.
                 return ""
             if (len(token) >= _GENERATED_LENGTH
                     and any(char.isdigit() for char in token)
@@ -329,10 +366,24 @@ class UnkeyedInputTest(BaseTest):
         if clean is None:
             return None
         if marked:
+            # A value minted for this scan cannot have arrived in a clean
+            # request from anywhere but a store, so this needs no control.
             if not self._reflects_marker(clean):
                 return None
-        elif self._artefact(clean) != artefact:
-            return None
+        else:
+            if self._artefact(clean) != artefact:
+                return None
+            # The clean request came back as the poisoned one. That is a cache
+            # replaying it only if a request for a different key, made now,
+            # does not come back the same way: a page that changed globally
+            # since the baseline - a deploy part way through the scan - also
+            # differs from the baseline, with no cache in it anywhere.
+            control = self.request("GET", url=self._busted_url(),
+                                   allow_redirects=False)
+            if control is None:
+                return None
+            if self._artefact(control) == self._artefact(clean):
+                return None
         cache_info = {header: clean.headers[header]
                       for header in CACHE_STATUS_HEADERS
                       if header in clean.headers}
