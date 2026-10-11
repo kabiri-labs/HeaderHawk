@@ -7,6 +7,8 @@ run - a pipeline that fails forever, and a feature nobody would leave switched
 on.
 """
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -19,6 +21,7 @@ from headerhawk.compliance.evidence import (DRIFT_CONTROL, STATUS_NOT_ASSESSED,
 from headerhawk.core.baseline import (collect_findings, compare,
                                       describe_drift, finding_identity,
                                       load_baseline)
+from headerhawk.cli import resolve_drift
 from headerhawk.core.findings import CLASS_POSTURE, CLASS_VULNERABILITY
 
 
@@ -38,15 +41,15 @@ class _Stub:
 class IdentityStabilityTests(unittest.TestCase):
     def test_a_fresh_marker_does_not_make_a_finding_look_new(self):
         # Two scans of the same unchanged target, each with its own marker.
-        first = _finding(payload="9f2c1ab7d3e4.example-collab.com")
-        second = _finding(payload="0011223344ab.example-collab.com")
+        first = _finding(payload=f"{hhs.new_token()}.example-collab.com")
+        second = _finding(payload=f"{hhs.new_token()}.example-collab.com")
         self.assertEqual(finding_identity(first), finding_identity(second))
 
     def test_a_cache_buster_in_the_url_does_not_either(self):
         first = _finding(test_type="Web Cache Poisoning",
-                         url="https://t/?cb=a1b2c3d4e5")
+                         url=f"https://t/?cb={hhs.new_token(10)}")
         second = _finding(test_type="Web Cache Poisoning",
-                          url="https://t/?cb=99887766aa")
+                          url=f"https://t/?cb={hhs.new_token(10)}")
         self.assertEqual(finding_identity(first), finding_identity(second))
 
     def test_real_markers_from_two_scans_agree(self):
@@ -138,24 +141,17 @@ class MarkerFoldingTests(unittest.TestCase):
             finding_identity(_finding(url="https://t/u/4f1c9ab2e7/profile")),
             finding_identity(_finding(url="https://t/u/77d0c9e4a1/profile")))
 
-    def test_a_baseline_from_an_earlier_version_still_matches(self):
-        # Those earlier markers carried no prefix. Their shapes are folded by
-        # the context the scanner put them in, so a team's accepted findings
-        # do not all look new the first time they scan with this version.
-        for legacy, current in (
-                ("9c1d4ba7f3e2.example-collab.com",
-                 f"{hhs.new_token()}.example-collab.com"),
-                ("X-HeaderHawk-9c1d4ba7f3e2",
-                 f"X-HeaderHawk-{hhs.new_token()}"),
-        ):
-            self.assertEqual(finding_identity(_finding(payload=legacy)),
-                             finding_identity(_finding(payload=current)),
-                             legacy)
-
-    def test_a_baseline_url_from_an_earlier_version_still_matches(self):
-        self.assertEqual(
-            finding_identity(_finding(url="https://t/?cb=4f1c9ab2e7")),
-            finding_identity(_finding(url=f"https://t/?cb={hhs.new_token(10)}")))
+    def test_a_marker_from_before_the_prefix_is_not_recognised(self):
+        # Deliberate, and the cost of the fix. Those markers sat in contexts
+        # this module cannot anchor to - a CORS origin is built around the
+        # target's own hostname - so recognising them would mean folding bare
+        # hexadecimal next to arbitrary text, which is the defect being fixed.
+        # Identities from before the prefix change once; a comparison that
+        # matches nothing says so, rather than leaving it to be guessed at.
+        self.assertNotEqual(
+            finding_identity(_finding(payload="9c1d4ba7f3e2.example-collab.com")),
+            finding_identity(
+                _finding(payload=f"{hhs.new_token()}.example-collab.com")))
 
     def test_an_internal_host_is_never_folded(self):
         self.assertNotEqual(
@@ -163,10 +159,54 @@ class MarkerFoldingTests(unittest.TestCase):
             finding_identity(_finding("SSRF", payload="127.0.0.1")))
 
 
+class BaselineDiagnosticTests(unittest.TestCase):
+    """A comparison that matches nothing has to say so.
+
+    Zero overlap between two non-empty sets is almost never what the operator
+    meant, and the summary alone - every finding new, every baseline entry
+    fixed - does not say why. A baseline from a version whose identities
+    differed looks exactly like the wrong file for the target.
+    """
+
+    class _Args:
+        def __init__(self, baseline):
+            self.baseline = baseline
+
+    def _resolve(self, stored, current):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "baseline.json")
+            with io.open(path, "w", encoding="utf-8") as handle:
+                json.dump(stored, handle)
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                drift = resolve_drift(self._Args(path), [_Stub(current)])
+            return drift, buffer.getvalue(), path
+
+    def test_zero_overlap_is_explained(self):
+        old_marker = _finding(payload="9c1d4ba7f3e2.example-collab.com")
+        now = _finding(payload=f"{hhs.new_token()}.example-collab.com")
+        drift, printed, path = self._resolve([old_marker], [now])
+        self.assertEqual(len(drift["new"]), 1)
+        self.assertEqual(drift["unchanged"], [])
+        self.assertIn("Nothing in", printed)
+        self.assertIn(os.path.basename(path), printed)
+        self.assertIn("older version", printed)
+
+    def test_an_overlap_is_not_explained(self):
+        marker = _finding(payload=f"{hhs.new_token()}.example-collab.com")
+        _, printed, _ = self._resolve([marker], [marker])
+        self.assertNotIn("Nothing in", printed)
+
+    def test_a_first_run_against_an_empty_baseline_is_not_explained(self):
+        # Nothing to match is not a mismatch.
+        _, printed, _ = self._resolve([], [_finding()])
+        self.assertNotIn("Nothing in", printed)
+
+
 class CompareTests(unittest.TestCase):
     def test_unchanged_findings_are_not_new(self):
-        current = [_finding(payload="aaaaaaaaaaaa.example-collab.com")]
-        baseline = [_finding(payload="bbbbbbbbbbbb.example-collab.com")]
+        current = [_finding(payload=f"{hhs.new_token()}.example-collab.com")]
+        baseline = [_finding(payload=f"{hhs.new_token()}.example-collab.com")]
         drift = compare(current, baseline)
         self.assertEqual(len(drift["unchanged"]), 1)
         self.assertEqual(drift["new"], [])

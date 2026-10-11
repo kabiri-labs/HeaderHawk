@@ -25,24 +25,15 @@ MARKER_PREFIX = "hh"
 # marker collapse onto the same text, and so onto the same identity.
 PLACEHOLDER = "<token>"
 
+# The one shape folded. A marker minted before the prefix existed is not
+# recognised here, and deliberately so: those markers sat in contexts this
+# module cannot anchor to - a CORS origin is built around the target's own
+# hostname, an out-of-band host around the operator's own domain - so covering
+# them would mean folding bare hexadecimal next to arbitrary text, which is the
+# defect this module exists to fix. Identities from before the prefix therefore
+# change once, and a baseline recorded then has to be taken again; a comparison
+# that matches nothing says so rather than leaving it to be guessed at.
 _OURS = re.compile(MARKER_PREFIX + r"[0-9a-f]{8,}", re.I)
-
-# The shapes the scanner's markers took before they carried a prefix, each one
-# anchored to the context the scanner itself put it in: the collaborator
-# domain, the cache-buster parameter, the injected header name. They are kept
-# so a baseline recorded by an earlier version still matches the scan in front
-# of it - without them every finding a team had already accepted would look new
-# once. Being anchored rather than shape-based, they cannot fold a value the
-# scanner did not produce.
-#
-# An out-of-band marker is the one shape not covered: it is built from the
-# operator's own domain, so there is no context here to anchor to. A blind-SSRF
-# finding recorded by an earlier version re-keys once.
-_LEGACY = (
-    re.compile(r"[0-9a-f]{8,}(?=\.example-collab\.com)", re.I),
-    re.compile(r"(?<=cb=)[0-9a-f]{8,}", re.I),
-    re.compile(r"(?<=X-HeaderHawk-)[0-9a-f]{8,}", re.I),
-)
 
 
 def new_token(length=12):
@@ -61,8 +52,4 @@ def fold_tokens(value):
     means something - a virtual host named in hex, an identifier in a path -
     because folding those would file two separate findings as one.
     """
-    text = str(value or "")
-    text = _OURS.sub(PLACEHOLDER, text)
-    for pattern in _LEGACY:
-        text = pattern.sub(PLACEHOLDER, text)
-    return text
+    return _OURS.sub(PLACEHOLDER, str(value or ""))

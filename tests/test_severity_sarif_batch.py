@@ -111,11 +111,11 @@ class FingerprintStabilityTests(unittest.TestCase):
 
     def test_two_scans_of_one_defect_share_a_fingerprint(self):
         first = _finding("Host Header Injection",
-                         url="http://t/?cb=4f1c9ab2e7",
-                         payload="9c1d4ba7f3e2.example-collab.com")
+                         url=f"http://t/?cb={hhs.new_token(10)}",
+                         payload=f"{hhs.new_token()}.example-collab.com")
         second = _finding("Host Header Injection",
-                          url="http://t/?cb=0ab33e71cc",
-                          payload="77d0c9e4a1bb.example-collab.com")
+                          url=f"http://t/?cb={hhs.new_token(10)}",
+                          payload=f"{hhs.new_token()}.example-collab.com")
         self.assertEqual(self._print(first), self._print(second))
 
     def test_two_different_defects_do_not(self):
@@ -142,7 +142,8 @@ class FingerprintStabilityTests(unittest.TestCase):
     def test_the_fingerprint_is_the_identity_the_baseline_matches_on(self):
         # One definition of "the same finding" for both features, so an alert
         # that --baseline calls unchanged is not a new alert on the dashboard.
-        finding = _finding("Web Cache Poisoning", payload="abc123def456.oob")
+        finding = _finding("Web Cache Poisoning",
+                           payload=f"{hhs.new_token()}.oob")
         self.assertEqual(self._print(finding), hhs.finding_identity(finding))
 
 
