@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-2.18.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-673%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-677%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -158,7 +158,7 @@ A header scanner earns its place by what it refuses to report. These are the rul
 | **Web cache deception** | A page still served under a `.css` suffix is half of it. The same URL is then requested by a session carrying **no cookies and no authorization**; content only the logged-in session should have seen, coming back to an anonymous one, is a shared cache handing one user's page to another. A response that already says `no-store` or `private` is not reported at all — that control is working. |
 | **CRLF injection** | The injected header field is *named* after a unique per-scan marker, so a field carrying it cannot have come from anywhere else. A value merely echoed into `Location` is not reported. |
 | **CORS** | A per-scan origin that cannot exist is sent; only the server echoing it back counts. Severity follows `Access-Control-Allow-Credentials`, because a permissive allowlist that also allows credentials lets an attacker's page read authenticated responses. A bare `*` without credentials — correct for a public endpoint — produces nothing. |
-| **Open redirect** | The status has to be a redirect a browser follows **and** the host in `Location` has to be the host that was sent — then an identical second probe has to redirect the same way. A two-sided match on one response is a page that may simply have been redirecting at the time. |
+| **Open redirect** | The status has to be a redirect a browser follows, the host in `Location` has to be the host that was sent, an identical second probe has to redirect the same way, **and the host that was sent has to be one minted for this scan**. A fixed hostname cannot tell "the destination follows the header" from "this is where the site always redirects": a site whose canonical destination is one of the probe hostnames matches every probe for reasons that have nothing to do with the header. When the target redirects to the same place whatever the header says, nothing is reported at all. |
 | **Virtual host discovery** | The default vhost is sampled repeatedly to learn its natural page-to-page variance; a candidate is reported only when a status, length or title difference survives a second probe. |
 | **SSRF** | Content only an internal target would return — `ami-id`, an IAM credentials path, `root:x:0:0:` — or an interaction at your own out-of-band listener. **A slow response is never reported as SSRF**, and neither is a slow response plus a changed header: a target under load looks exactly like that. An internal error string is reported as `suspected`, with the flags that would settle it. Header anomalies are measured only against headers proven stable across baseline samples, so request ids, tracing headers, `CF-RAY` and nonces are learned as volatile and ignored. |
 | **Request smuggling** | A hang is reported only after two consecutive probes agree **and** a well-formed request in between still returns normally — which is what separates a desync from a target that merely became slow. |
@@ -177,7 +177,7 @@ This is per control, not per check: one HTML page in the scan is enough to have 
 
 ### One defect, one finding
 
-Five static-looking suffixes that all work are one defect with one fix, so they are one finding that names all five. A server that reflects *any* origin is reported once as reflection, not five times over as each narrower bypass. One CRLF hole is reported once, not once per encoding that reaches it. One routing header that echoes the marker is one finding naming every shape that worked, not one finding per shape — six shapes of one echoed header are one defect with one place to fix it. Four hostnames a `Host`-driven redirect accepts are one finding naming all four.
+Five static-looking suffixes that all work are one defect with one fix, so they are one finding that names all five. A server that reflects *any* origin is reported once as reflection, not five times over as each narrower bypass. One CRLF hole is reported once, not once per encoding that reaches it. One routing header that echoes the marker is one finding naming every shape that worked, not one finding per shape — six shapes of one echoed header are one defect with one place to fix it. Every hostname a `Host`-driven redirect accepts is one finding naming all of them — and only the ones that held on their own second probe.
 
 ### Findings split by class, so the gate stays useful
 
@@ -214,7 +214,7 @@ The threshold applies to posture only. A proven vulnerability is reported at any
 | **SSRF via routing headers** | Routing headers pointed at internal hosts and cloud metadata endpoints |
 | **Blind SSRF (out-of-band)** | Per-scan correlation id in payloads, confirmed by polling your listener — interactsh, webhook.site, RequestBin, Burp Collaborator exports, custom sinks. An interaction is attributed to the payload hostname that caused it, so one visit is one finding; an export naming only the scan id is reported once, as an interaction whose vector could not be identified |
 | **URL-parameter SSRF** | `url`, `next`, `redirect`, `dest`, `uri`, `path`, … against internal targets, with baseline differencing |
-| **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value, on a status a browser follows and on a second probe as well. Four payloads reach the same conclusion, so they are one finding naming every host the redirect accepted |
+| **Open redirect** | `Host`-driven redirects whose `Location` host matches the injected value, on a status a browser follows, on a second probe as well, and for a host minted for this scan. Well-known hostnames are sent too — an application that resolves a destination before redirecting takes one of those where a marker fails — but on their own they are reported as the weaker evidence they are. One finding, naming every host that held |
 | **CRLF injection / response splitting** | Percent-encoded, double-encoded and overlong-UTF-8 `CR`/`LF` in parameters, path and decoded headers |
 | **HTTP request smuggling** | CL.TE and TE.CL front-end/back-end disagreement, detected by timing |
 | **Virtual host discovery** | `Host` brute force over 44 built-in names or your own wordlist, two-probe confirmed |
@@ -506,7 +506,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 673 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 677 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.

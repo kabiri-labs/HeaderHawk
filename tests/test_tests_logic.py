@@ -256,15 +256,78 @@ class OpenRedirectTests(unittest.TestCase):
         self.assertEqual(test._hits, [])
 
     def test_every_accepted_host_is_one_finding(self):
-        # Four payloads reach the same conclusion - the redirect follows the
+        # Several payloads reach the same conclusion - the redirect follows the
         # Host header - which is one defect with one place to fix it.
         test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
         test.request = self._redirecting()
         test.run()
         self.assertEqual(len(test.vulnerabilities_found), 1)
+        analysis = test.vulnerabilities_found[0]["analysis"]
+        for host in ("example.com", "www.example.com"):
+            self.assertIn(host, analysis)
+
+    def test_only_hosts_that_held_are_listed_as_accepted(self):
+        # Listing a host that matched once, or one that was never re-probed
+        # because another candidate confirmed first, would report it as
+        # accepted on evidence the scan does not have.
+        seen = []
+
+        def respond(method, url=None, headers=None, **kwargs):
+            host = (headers or {}).get("Host", "")
+            seen.append(host)
+            # www.example.com redirects once and then stops; everything else
+            # keeps redirecting.
+            if host.startswith("www.") and seen.count(host) > 1:
+                return FakeResponse(status_code=200, url="http://example.com/")
+            return FakeResponse(status_code=302, url="http://example.com/",
+                                headers={"Location": f"http://{host}/"})
+
+        test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
+        test.request = respond
+        test.run()
+        analysis = test.vulnerabilities_found[0]["analysis"]
+        self.assertIn("example.com", analysis)
+        self.assertNotIn("www.example.com", analysis)
+
+    def test_a_minted_host_is_what_confirms(self):
+        # A fixed hostname cannot tell "the destination follows the header"
+        # from "this is where the site always redirects".
+        test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
+        test.request = self._redirecting()
+        test.run()
         finding = test.vulnerabilities_found[0]
-        for payload in test.generate_payloads():
-            self.assertIn(payload, finding["analysis"])
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_CONFIRMED)
+        self.assertIn(hhs.MARKER_PREFIX, finding["payload"])
+
+    def test_a_canonical_redirect_is_not_a_finding(self):
+        # A site that always redirects to its own canonical host, ignoring the
+        # header, used to be reported as a confirmed open redirect whenever
+        # that host happened to be one of the probe hostnames.
+        test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
+        test.request = lambda *a, **k: FakeResponse(
+            status_code=301, url="http://example.com/",
+            headers={"Location": "https://example.com/"})
+        test.run()
+        self.assertEqual(test.vulnerabilities_found, [])
+
+    def test_well_known_hosts_alone_are_not_proof(self):
+        # An allowlist that includes them, an application that resolves a
+        # destination before redirecting, or a coincidence - 3.7.2 asks for an
+        # allowlist, so none of those is reported as a failure of it.
+        def respond(method, url=None, headers=None, **kwargs):
+            host = (headers or {}).get("Host", "")
+            if host.startswith(("example.com", "www.example.com")):
+                return FakeResponse(status_code=302, url="http://example.com/",
+                                    headers={"Location": f"https://{host}/go"})
+            return FakeResponse(status_code=200, url="http://example.com/")
+
+        test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
+        test.request = respond
+        test.run()
+        finding = test.vulnerabilities_found[0]
+        self.assertEqual(finding["confidence"], hhs.CONFIDENCE_SUSPECTED)
+        self.assertIn("minted for this scan", finding["analysis"])
+        self.assertIn("--oob", finding["confirmation"])
 
     def test_a_redirect_that_holds_twice_is_confirmed(self):
         test = make_test(hhs.OpenRedirectTest, FakeSession(), quiet=True)
