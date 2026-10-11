@@ -32,19 +32,25 @@ DOCUMENTATION_IP = "203.0.113.7"
 # "Https" and carries a flag. Guessing from the name is how a header ends up
 # tested with a value that means nothing in it, which is the defect this file
 # exists to fix.
+# Headers that name the scheme, and the flags proxies set to say the same
+# thing. Their value is not fixed: it has to be the opposite of what the target
+# already is. Sending "http" to an http:// target reproduces the baseline, so
+# an application that rebuilds its URLs from the header looks untouched and the
+# header reads as inert - a clean result from a probe that never asked anything.
+SCHEME_HEADERS = frozenset({
+    "x-forwarded-proto", "x-forwarded-scheme", "x-forwarded-protocol",
+    "x-url-scheme",
+})
+SSL_FLAG_HEADERS = frozenset({"x-forwarded-ssl", "front-end-https"})
+NUMERIC_FLAG_HEADERS = frozenset({"fastly-ssl"})
+VISITOR_HEADERS = frozenset({"cf-visitor"})
+
+# The port to offer, and what to offer instead when the target is already on
+# it, for the same reason.
+PROBE_PORT = "8080"
+ALTERNATE_PORT = "8081"
+
 TYPED_VALUES = {
-    # Scheme. http against an https origin is the gadget: an application that
-    # rebuilds absolute URLs from it downgrades every link in the page.
-    "x-forwarded-proto": "http",
-    "x-forwarded-scheme": "http",
-    "x-forwarded-protocol": "http",
-    "x-url-scheme": "http",
-    # Flags, which proxies set to say the same thing a scheme does.
-    "x-forwarded-ssl": "off",
-    "front-end-https": "off",
-    "fastly-ssl": "0",
-    # Port, which an application rebuilding a URL will put back into it.
-    "x-forwarded-port": "8080",
     # Client address.
     "x-real-ip": DOCUMENTATION_IP,
     "x-client-ip": DOCUMENTATION_IP,
@@ -77,7 +83,6 @@ TYPED_VALUES = {
     "viewport-width": "320",
     "x-wap-profile": "http://wap.example.com/profile.xml",
     # Structured values a parser would reject a hostname in.
-    "cf-visitor": '{"scheme":"http"}',
     "x-envoy-internal": "true",
     "x-middleware-prefetch": "1",
     "x-moz": "prefetch",
@@ -100,18 +105,41 @@ PATH_SHAPED = frozenset({
 })
 
 
-def candidate_value(header_name, marker):
+def _opposite_scheme(target_scheme):
+    return "http" if (target_scheme or "").lower() == "https" else "https"
+
+
+def candidate_value(header_name, marker, target_scheme="https",
+                    target_port=None):
     """The value to send in this header: one of the shape it really carries.
 
     The marker is used wherever the shape allows it, because a unique value is
     what makes a reflection proof rather than a coincidence.
+
+    Where the value names what the target already is - its scheme, its port -
+    the probe is the opposite. Offering a target its own scheme asks it
+    nothing: an application that rebuilds every absolute URL from the header
+    returns exactly the baseline, and the header reads as inert.
     """
     name = (header_name or "").strip().lower()
     if name in PATH_SHAPED:
         return f"/{marker}"
+    if name in SCHEME_HEADERS:
+        return _opposite_scheme(target_scheme)
+    if name in SSL_FLAG_HEADERS:
+        return "off" if (target_scheme or "").lower() == "https" else "on"
+    if name in NUMERIC_FLAG_HEADERS:
+        return "0" if (target_scheme or "").lower() == "https" else "1"
+    if name in VISITOR_HEADERS:
+        return '{"scheme":"%s"}' % _opposite_scheme(target_scheme)
+    if name == "x-forwarded-port":
+        return (ALTERNATE_PORT if str(target_port or "") == PROBE_PORT
+                else PROBE_PORT)
     return TYPED_VALUES.get(name, marker)
 
 
-def carries_marker(header_name, marker):
+def carries_marker(header_name, marker, target_scheme="https",
+                   target_port=None):
     """Whether this header's value contains the marker, and so can reflect it."""
-    return marker in candidate_value(header_name, marker)
+    return marker in candidate_value(header_name, marker, target_scheme,
+                                     target_port)

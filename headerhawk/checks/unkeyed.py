@@ -120,7 +120,16 @@ class UnkeyedInputTest(BaseTest):
         # reproduce itself, and the reason the length tolerance is still here.
         self.baseline_artefact = None
         self._volatile = frozenset()
-        self._volatile_contexts = frozenset()
+        # Where the page was seen moving, as anchor -> the shapes that
+        # moved there. An anchor is a place in the response, not a value
+        # and not a shape: see _anchors.
+        self._volatile_at = {}
+        # What the target already is, so a probe can offer it something
+        # else. Asking a target for the scheme it already has asks it
+        # nothing.
+        parsed = urlparse(self.target_url)
+        self._target_scheme = parsed.scheme or "http"
+        self._target_port = parsed.port
 
     # -- baseline ------------------------------------------------------------
 
@@ -173,7 +182,7 @@ class UnkeyedInputTest(BaseTest):
                 f"result would mean only that the search was blind")
             return False
 
-        self._volatile, self._volatile_contexts = self._learn_volatile(
+        self._volatile, self._volatile_at = self._learn_volatile(
             [fold_tokens(self._artefact_source(sample))
              for sample in samples])
         artefacts = {self._artefact(sample) for sample in samples}
@@ -213,42 +222,65 @@ class UnkeyedInputTest(BaseTest):
         return "".join(kinds)
 
     @classmethod
-    def _context_of(cls, text, start):
-        """Where in the response a token sits: the text just before it."""
-        return _DIGITS.sub("#", text[max(0, start - _CONTEXT):start])
+    def _anchors(cls, text):
+        """Every token in the text, with where it sits and what shape it is.
+
+        Yields ``(anchor, shape, match)``. An anchor is the text just before
+        the token - digit runs flattened, because what sits in front of a
+        moving token is often another moving token - together with how many
+        times that same text has already been seen.
+
+        The count is what makes it a position rather than a pattern. A table of
+        identical rows has the same text in front of every one of them, so a
+        timestamp moving in the first row would otherwise mask the account id
+        in the second.
+        """
+        counts = {}
+        for match in _TOKENISH.finditer(text):
+            window = _DIGITS.sub("#", text[max(0, match.start() - _CONTEXT):
+                                           match.start()])
+            index = counts.get(window, 0)
+            counts[window] = index + 1
+            yield (window, index), cls._shape_of(match.group(0)), match
+
+    @staticmethod
+    def _looks_generated(token):
+        """Whether a token reads as generated rather than written."""
+        return (len(token) >= _GENERATED_LENGTH
+                and any(char.isdigit() for char in token)
+                and any(char.isalpha() for char in token))
 
     @classmethod
     def _learn_volatile(cls, sources):
         """What moves between two identical requests, and where it moves.
 
-        Returns the values seen moving and the (context, shape) pairs they were
-        seen in.
+        Returns the values seen moving, and a map from each place they moved in
+        to the shapes seen there.
 
         The values alone are not enough: a page carrying a Unix timestamp shows
         three of them while it is sampled and a fourth on the next request, and
         masking only the three leaves every candidate header looking like it
         changed the response.
 
-        The shape alone is too much. A timestamp would teach that every run of
+        Generalising past them is only safe where the page was seen moving. A
+        shape learned across the whole response would teach that every run of
         digits anywhere is noise, and a candidate whose only effect is changing
         an account id in a URL would be masked along with it - the search would
-        go quiet about the very gadget it exists to find. So a shape is
-        generalised only in the place it was seen moving, and only when it
-        contains a run of digits: every kind of noise worth masking has one,
-        and an all-letter shape would otherwise mask most of the words on the
-        page.
+        go quiet about the very gadget it exists to find. The same goes for a
+        token that merely looks generated: a stable tenant id or asset hash
+        has that shape too, and one of those changing is a finding.
         """
         seen = [set(_TOKENISH.findall(source)) for source in sources]
         if not seen:
-            return frozenset(), frozenset()
+            return frozenset(), {}
         values = frozenset(set.union(*seen) - set.intersection(*seen))
-        contexts = set()
+        places = {}
         for source in sources:
-            for match in _TOKENISH.finditer(source):
-                shape = cls._shape_of(match.group(0))
-                if match.group(0) in values and "d" in shape:
-                    contexts.add((cls._context_of(source, match.start()), shape))
-        return values, frozenset(contexts)
+            for anchor, shape, match in cls._anchors(source):
+                if match.group(0) in values:
+                    places.setdefault(anchor, set()).add(shape)
+        return values, {anchor: frozenset(shapes)
+                        for anchor, shapes in places.items()}
 
     def _artefact_source(self, response):
         """Everything the artefact is built from, before any masking.
@@ -276,27 +308,26 @@ class UnkeyedInputTest(BaseTest):
     def _mask(self, text):
         """The text with the page's own noise taken out, and nothing else."""
         text = fold_tokens(text)
-
-        def replace(match):
+        kept = []
+        last = 0
+        for anchor, shape, match in self._anchors(text):
             token = match.group(0)
-            if token in self._volatile:
+            moved_here = self._volatile_at.get(anchor)
+            drop = (
                 # Seen to move between two identical requests.
-                return ""
-            if (self._context_of(text, match.start()),
-                    self._shape_of(token)) in self._volatile_contexts:
-                # The next value of something the baseline saw moving in this
-                # same place: a timestamp one second later, the request id
-                # after this one. The same shape elsewhere in the response is
-                # left alone, because there it may be the thing that changed.
-                return ""
-            if (len(token) >= _GENERATED_LENGTH
-                    and any(char.isdigit() for char in token)
-                    and any(char.isalpha() for char in token)):
-                # Shaped like something generated, so the next request will
-                # carry a different one whether or not the baseline saw it.
-                return ""
-            return token
-        return _TOKENISH.sub(replace, text)
+                token in self._volatile
+                # Or the next value of something that moved in this very
+                # place: a timestamp one second later, the request id after
+                # this one, a nonce whose shape is different every time. The
+                # same shape anywhere else is left alone, because there it may
+                # be the thing that changed.
+                or (moved_here is not None
+                    and (shape in moved_here or self._looks_generated(token))))
+            if drop:
+                kept.append(text[last:match.start()])
+                last = match.end()
+        kept.append(text[last:])
+        return "".join(kept)
 
     def _reflects_marker(self, response):
         if self.token in (response.text or ""):
@@ -332,7 +363,11 @@ class UnkeyedInputTest(BaseTest):
 
     def _values_for(self, names):
         """What to send in each of these headers."""
-        return {name: candidate_value(name, self.marker) for name in names}
+        return {name: self._value_for(name) for name in names}
+
+    def _value_for(self, name):
+        return candidate_value(name, self.marker, self._target_scheme,
+                               self._target_port)
 
     def _send(self, names, url=None):
         return self.request("GET", url=url or self._busted_url(),
@@ -453,7 +488,7 @@ class UnkeyedInputTest(BaseTest):
                 self.report(name, reason)
 
     def report(self, name, reason):
-        value = candidate_value(name, self.marker)
+        value = self._value_for(name)
         confirmed = self.confirm_poisoning(name)
         if confirmed:
             url, clean, cache_info, marked = confirmed

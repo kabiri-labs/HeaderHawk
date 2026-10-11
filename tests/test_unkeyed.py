@@ -310,14 +310,30 @@ class ArtefactTests(unittest.TestCase):
 class TypedValueTests(unittest.TestCase):
     """A candidate has to carry a value of the shape it really holds."""
 
-    def test_a_scheme_header_is_sent_a_scheme(self):
+    def test_a_scheme_header_is_sent_the_other_scheme(self):
+        # BASE is http://, so the probe has to be https. Offering a target the
+        # scheme it already has asks it nothing: an application that rebuilds
+        # every URL from the header returns exactly the baseline.
         test = _make(_honours([]))
         values = test._values_for(["X-Forwarded-Proto", "X-Forwarded-Port",
                                    "True-Client-IP", "X-Forwarded-Host"])
-        self.assertEqual(values["X-Forwarded-Proto"], "http")
+        self.assertEqual(values["X-Forwarded-Proto"], "https")
         self.assertEqual(values["X-Forwarded-Port"], "8080")
         self.assertNotIn(".example-collab.com", values["True-Client-IP"])
         self.assertEqual(values["X-Forwarded-Host"], test.marker)
+
+    def test_an_https_target_is_sent_the_downgrade(self):
+        test = UnkeyedInputTest("https://t.example/", "t.example",
+                                session=_Target(_honours([])), timeout=1,
+                                verbose=0, quiet=True)
+        self.assertEqual(test._value_for("X-Forwarded-Proto"), "http")
+        self.assertEqual(test._value_for("X-Forwarded-Ssl"), "off")
+
+    def test_a_target_already_on_the_probe_port_is_offered_another(self):
+        test = UnkeyedInputTest("https://t.example:8080/", "t.example",
+                                session=_Target(_honours([])), timeout=1,
+                                verbose=0, quiet=True)
+        self.assertEqual(test._value_for("X-Forwarded-Port"), "8081")
 
     def test_a_path_header_carries_the_marker_in_a_path(self):
         test = _make(_honours([]))
@@ -417,8 +433,8 @@ class NoiseTests(unittest.TestCase):
     def test_the_shape_is_learned_where_it_was_seen(self):
         test = _make(self._ticking('<html>home <span id="ts">{value}</span></html>'))
         test.learn_baseline()
-        self.assertTrue(any(shape == "d"
-                            for _, shape in test._volatile_contexts))
+        self.assertTrue(any("d" in shapes
+                            for shapes in test._volatile_at.values()))
 
     def test_a_counter_with_a_prefix_generalises_too(self):
         test = _make(self._ticking('<html>home req{value}</html>'))
@@ -435,7 +451,10 @@ class NoiseTests(unittest.TestCase):
 
         test = _make(responder)
         test.learn_baseline()
-        self.assertEqual(test._volatile_contexts, frozenset())
+        # A word-shaped run that moved is still masked where it moved; what
+        # must not happen is every word on the page going with it.
+        self.assertTrue(test._volatile_at)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
 
     def test_noise_in_one_place_does_not_mask_the_same_shape_elsewhere(self):
         # The defect a shape learned globally would cause: a timestamp teaches
@@ -465,6 +484,55 @@ class NoiseTests(unittest.TestCase):
             build[0] += 1
             return FakeResponse(200, text="<html>home</html>", url=BASE,
                                 headers={"Link": f"<https://cdn/b{build[0]:08d}/a.js>; rel=preload"})
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertFalse(test.affects(["X-Forwarded-Host"])[0])
+
+
+    def test_noise_in_one_row_does_not_mask_the_next_row(self):
+        # The same markup in front of every row, so a prefix alone is not a
+        # position: a timestamp moving in the first row must not mask the
+        # account id in the second.
+        clock = [1760140800]
+
+        def responder(url, headers):
+            clock[0] += 1
+            moved = any(k.lower() == "x-forwarded-host" for k in headers)
+            second = "87654321" if moved else "12345678"
+            return _page(f"<html>"
+                         f"<tr><td>id</td><td>{clock[0]}</td></tr>"
+                         f"<tr><td>id</td><td>{second}</td></tr>"
+                         f"</html>")
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_stable_generated_looking_token_is_not_masked(self):
+        # A tenant id or an asset hash has the shape of something generated,
+        # and one of those changing is a finding, not noise.
+        def responder(url, headers):
+            moved = any(k.lower() == "x-forwarded-host" for k in headers)
+            asset = "app-b7f3c91d4e" if moved else "app-a1e5d02f9c"
+            return _page(f'<html><script src="/static/{asset}.js"></script></html>')
+
+        test = _make(responder)
+        test.learn_baseline()
+        self.assertIsNotNone(test.baseline_artefact)
+        self.assertTrue(test.affects(["X-Forwarded-Host"])[0])
+
+    def test_a_nonce_whose_shape_changes_is_still_masked(self):
+        # Where the page was seen moving, anything generated-looking goes:
+        # consecutive hex nonces do not share a shape, so the shape alone
+        # could never have caught the next one.
+        nonces = ["a3f9c2d8e1b4", "7d1e0b5a8c32", "f20c7e4d9a16", "4b8a1f6c3d05"]
+
+        def responder(url, headers):
+            value = nonces.pop(0) if nonces else "9e2d7c1b8a40"
+            return _page(f'<html><style nonce="{value}">x</style>home</html>')
 
         test = _make(responder)
         test.learn_baseline()
