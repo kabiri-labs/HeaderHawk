@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-2.15.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-618%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-623%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -167,7 +167,7 @@ The same applies elsewhere: an unconfirmed cache-deception finding tells you it 
 
 ### Assessed only where the control can act
 
-A JSON API reply has no document for a browser to frame, no referrer to withhold, no script to constrain and no opener to isolate. Failing it for a missing `Content-Security-Policy` is noise; **passing** it would be worse. So the document controls — CSP, framing, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, CSP reporting — are assessed only on a response a browser renders as a document, and on anything else they are reported as *not assessed* naming the media type that was returned instead. Transport security, MIME sniffing, cookie attributes and a leaked version banner apply to every response and are assessed everywhere. A response that declares no media type at all is treated as a document, because a browser may sniff one.
+A JSON API reply has no document for a browser to frame, no referrer to withhold, no script to constrain and no opener to isolate. Failing it for a missing `Content-Security-Policy` is noise; **passing** it would be worse. So the document controls — CSP, framing, `Referrer-Policy`, `Cross-Origin-Opener-Policy`, `Permissions-Policy`, CSP reporting — are assessed only on a response a browser renders as a document, and on anything else they are reported as *not assessed* naming the media type that was returned instead. Transport security, MIME sniffing, cookie attributes and a leaked version banner apply to every response and are assessed everywhere. An SVG counts as a document — navigated to rather than drawn by an `<img>`, script inside it runs and a policy applies to it — and so does a response that declares no media type at all, because a browser may sniff one. `text/plain` does not: it has no links to send a referrer from and no script for a policy to constrain. Nor does XML, which is what a great many APIs answer with.
 
 This is per control, not per check: one HTML page in the scan is enough to have assessed the document controls, and the API endpoints alongside it no longer file a finding each for them.
 
@@ -185,7 +185,9 @@ Alongside its class, each finding carries a confidence: **`confirmed`** when the
 
 ### Quiet enough to keep reading
 
-Response-header posture has a long tail of controls that almost no site sets and that almost no site is meaningfully worse off for not setting. Reported on every route, every run, they are how a report stops being read. So `--min-severity` (default **`medium`**) decides the quietest posture finding the console, the findings report and the exit code take account of — and the run says how many it is not showing, so it is never silent about its own silence. **The compliance evidence report always carries every one of them**, because a requirement that is unmet has to appear in the document an assessor reads.
+Response-header posture has a long tail of controls that almost no site sets and that almost no site is meaningfully worse off for not setting. Reported on every route, every run, they are how a report stops being read. So `--min-severity` (default **`medium`**) decides the quietest posture finding the console, the Markdown report, the SARIF and the exit code take account of — and the run says how many it is not showing, so it is never silent about its own silence.
+
+Two artefacts are records rather than views and always carry every finding whatever band it is: the **compliance evidence report**, because a requirement that is unmet has to appear in the document an assessor reads, and **`-o <file>.json`**, because that is the file `--baseline` reads back. A baseline missing the findings the next scan still collects would report every one of them as new, run after run, which is the opposite of what the flag is for.
 
 The threshold applies to posture only. A proven vulnerability is reported at any band: a confirmed internal hostname is filed as `Low`, and an operator who asked for less noise did not ask for that. Three bands were recalibrated to match their real stakes rather than their appearance — a missing `Referrer-Policy` (every current browser already withholds the path and query cross-origin), a missing `Permissions-Policy` (no catalogued requirement covers it), and framing restricted only by `X-Frame-Options` (honoured by every browser still in support). Each is still reported, and each still fails its requirement in the evidence report; none of them now reads as something to fix today.
 
@@ -436,7 +438,7 @@ python headerhawk.py https://example.com
 | `--baseline <file>` | A previous scan's JSON; findings reported as new, fixed or unchanged |
 | `--fail-on-new` | Gate the exit code on findings absent from `--baseline`. Requires `--baseline` |
 | `--fail-on {vuln,posture,any,none}` | Which classes make the process exit `1` (default `vuln`) |
-| `--min-severity {info,low,medium,high,critical}` | Quietest posture finding to report and to gate on (default `medium`). The evidence report always lists every one; proven vulnerabilities are reported at any severity |
+| `--min-severity {info,low,medium,high,critical}` | Quietest posture finding the console, the Markdown report, the SARIF and the exit code take account of (default `medium`). The evidence report and `.json` output always carry every one; proven vulnerabilities are reported at any severity |
 | `--verbose {1,2}` | Level 2 also records non-findings for the report |
 | `--quiet`, `-q` | Strip progress bars and colour. Auto-enabled when stdout is not a TTY |
 
@@ -496,7 +498,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Two of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 618 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 623 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.

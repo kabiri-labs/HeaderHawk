@@ -100,6 +100,21 @@ class ApplicabilityTests(unittest.TestCase):
         reported = _types(_posture({"Content-Type": "application/xhtml+xml"}))
         self.assertIn("Content-Security-Policy", reported)
 
+    def test_an_svg_counts_as_a_document(self):
+        # Navigated to rather than drawn by an <img>, an SVG is active:
+        # script inside it runs, a CSP applies to it, and it can be framed.
+        reported = _types(_posture({"Content-Type": "image/svg+xml"}))
+        self.assertIn("Content-Security-Policy", reported)
+        self.assertIn("Frame Protection", reported)
+
+    def test_text_and_xml_do_not(self):
+        # A text document has no links to send a referrer from and no script
+        # for a policy to constrain; XML is what a great many APIs answer
+        # with, and assessing them there is the noise this removes.
+        for media_type in ("text/plain", "text/xml", "application/xml"):
+            reported = _types(_posture({"Content-Type": media_type}))
+            self.assertNotIn("Content-Security-Policy", reported, media_type)
+
 
 class EvidenceGranularityTests(unittest.TestCase):
     """A control nobody looked at must never read as passing."""
@@ -256,15 +271,59 @@ class ThresholdTests(unittest.TestCase):
     def test_the_findings_report_leaves_them_out_and_says_so(self):
         tests = [self._Stub([self._posture_finding("Low"),
                              self._vulnerability("Low")])]
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "out.md")
-            with contextlib.redirect_stdout(io.StringIO()):
-                hhs.save_results(path, tests, verbose=1)
-            with io.open(path, encoding="utf-8") as handle:
-                content = handle.read()
+        content = self._write(tests, "md")
         self.assertIn("Virtual Host Discovery", content)
         self.assertNotIn("Referrer-Policy", content)
         self.assertIn("1 further posture finding(s)", content)
+
+    def _write(self, tests, extension, **kwargs):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, f"out.{extension}")
+            with contextlib.redirect_stdout(io.StringIO()):
+                hhs.save_results(path, tests, verbose=1, **kwargs)
+            with io.open(path, encoding="utf-8") as handle:
+                return handle.read()
+
+    def test_the_json_record_keeps_what_the_markdown_view_drops(self):
+        # JSON is the complete record and the file --baseline reads back;
+        # Markdown is what a person reads.
+        tests = [self._Stub([self._posture_finding("Info")])]
+        self.assertIn("Referrer-Policy", self._write(tests, "json"))
+        self.assertNotIn("Referrer-Policy", self._write(tests, "md"))
+
+    def test_an_unchanged_target_is_not_reported_as_new(self):
+        # The documented flow: write a baseline, then compare a later scan
+        # against it. A baseline missing the findings the next scan still
+        # collects reports every one of them as new, run after run, which is
+        # the opposite of what the flag is for.
+        tests = [self._Stub([self._posture_finding("Info"),
+                             self._vulnerability("Low")])]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "baseline.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                hhs.save_results(path, tests, verbose=1)
+            stored = hhs.load_baseline(path)
+        self.assertEqual(len(stored), 2)
+        drift = hhs.compare(hhs.collect_findings(tests), stored)
+        self.assertEqual(len(drift["new"]), 0)
+        self.assertEqual(len(drift["unchanged"]), 2)
+
+    def test_lowering_the_threshold_does_not_make_old_findings_new(self):
+        # Asking to see more must not fail a build on findings that were
+        # already there when the baseline was taken.
+        tests = [self._Stub([self._posture_finding("Info")])]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "baseline.json")
+            with contextlib.redirect_stdout(io.StringIO()):
+                hhs.save_results(path, tests, verbose=1)
+            stored = hhs.load_baseline(path)
+        drift = hhs.compare(hhs.collect_findings(tests), stored)
+        self.assertEqual(
+            hhs.gated_finding_count(tests, "any",
+                                    only_identities=drift["new_identities"],
+                                    identity_of=hhs.finding_identity,
+                                    min_severity="info"),
+            0)
 
     def test_the_evidence_report_keeps_every_one_of_them(self):
         # The threshold is the operator's view; the compliance report is the

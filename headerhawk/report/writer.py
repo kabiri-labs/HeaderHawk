@@ -51,19 +51,23 @@ def save_results(output_file, tests, verbose,
                  min_severity=DEFAULT_MIN_SEVERITY):
     """Write the findings report, leaving out what the threshold silences.
 
-    The threshold is the operator's working view, not the record: the
-    compliance evidence report lists every finding whatever band it carries,
-    so narrowing this one loses nothing.
+    The threshold applies to the formats a person reads - Markdown and the
+    SARIF a dashboard renders. **JSON is the complete record** and is never
+    filtered: it is the file ``--baseline`` reads back, and a baseline missing
+    the findings the current scan still collects would make an unchanged target
+    report every one of them as new, run after run. That is the opposite of
+    what the flag is for.
     """
     if not output_file or not tests:
         return
     extension = output_file.rsplit(".", 1)[-1].lower()
-    suppressed = suppressed_count(tests, min_severity)
+    complete = extension == "json"
+    suppressed = 0 if complete else suppressed_count(tests, min_severity)
     results = []
     for test in tests:
         results.extend(test.all_results if verbose == 2 else [])
         results.extend(finding for finding in test.vulnerabilities_found
-                       if reportable(finding, min_severity))
+                       if complete or reportable(finding, min_severity))
     # Ensure every result carries a severity and its control mapping so
     # JSON/SARIF/Markdown agree - verbose-2 entries never went through record().
     for result in results:
