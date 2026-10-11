@@ -56,10 +56,8 @@ class IdentityStabilityTests(unittest.TestCase):
         # Drive the actual marker generation rather than hand-written strings.
         first = hhs.HostInjectionTest("https://t/", "t", session=None, timeout=1)
         second = hhs.HostInjectionTest("https://t/", "t", session=None, timeout=1)
-        _, markers_a = first.generate_markers()
-        _, markers_b = second.generate_markers()
-        payload_a = sorted(markers_a)[0]
-        payload_b = sorted(markers_b)[0]
+        payload_a = first.generate_cases()[1][0][3]
+        payload_b = second.generate_cases()[1][0][3]
         self.assertNotEqual(payload_a, payload_b)  # genuinely different markers
         self.assertEqual(finding_identity(_finding(payload=payload_a)),
                          finding_identity(_finding(payload=payload_b)))

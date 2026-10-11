@@ -22,33 +22,55 @@ def make_test(cls, session, target="http://example.com/", host="example.com",
 
 
 class HostInjectionMarkerTests(unittest.TestCase):
-    def test_markers_include_bypass_shapes(self):
+    def test_every_case_carries_the_marker(self):
         test = make_test(hhs.HostInjectionTest, FakeSession())
-        token, markers = test.generate_markers()
-        base = next(m for m in markers if m.startswith(token))
-        self.assertIn(f"example.com.{base}", markers)
-        self.assertIn(f"example.com@{base}", markers)
+        token, cases = test.generate_cases()
+        self.assertTrue(cases)
+        for _, _, shape, value in cases:
+            self.assertIn(token, value, shape)
+
+    def test_a_host_header_gets_the_shapes_worth_sending(self):
+        test = make_test(hhs.HostInjectionTest, FakeSession())
+        _, cases = test.generate_cases()
+        shapes = {shape for _, header, shape, _ in cases if header == "Host"}
+        for shape in ("plain", "target as a prefix", "target as userinfo",
+                      "appended to a list"):
+            self.assertIn(shape, shapes)
+
+    def test_forwarded_gets_its_own_syntax(self):
+        test = make_test(hhs.HostInjectionTest, FakeSession())
+        _, cases = test.generate_cases()
+        values = [value for _, header, _, value in cases
+                  if header == "Forwarded"]
+        self.assertTrue(values)
+        for value in values:
+            self.assertTrue(value.startswith(("host=", "for=")), value)
 
     def test_marker_uses_oob_manager_host(self):
         manager = hhs.OOBManager("oob.example.com")
         test = make_test(hhs.HostInjectionTest, FakeSession(), oob_manager=manager)
-        _, markers = test.generate_markers()
-        self.assertTrue(any("oob.example.com" in m for m in markers))
+        _, cases = test.generate_cases()
+        self.assertTrue(any("oob.example.com" in value
+                            for _, _, _, value in cases))
 
-    def test_worker_records_body_reflection(self):
+    def test_worker_collects_a_reflection_without_reporting_it(self):
+        # Reflections are gathered first and graded afterwards, so that five
+        # shapes of one echoed header become one finding rather than five.
         test = make_test(hhs.HostInjectionTest, FakeSession())
-        test.marker_token = "deadbeef"
+        test.marker_token = "hhdeadbeef99"
         test.request = lambda *a, **k: FakeResponse(
-            text="prefix deadbeef suffix", url="http://example.com/")
-        test.worker("GET", "X-Forwarded-Host", "deadbeef.example-collab.com")
-        self.assertEqual(len(test.vulnerabilities_found), 1)
-        self.assertIn("response body", test.vulnerabilities_found[0]["analysis"])
+            text="prefix hhdeadbeef99 suffix", url="http://example.com/")
+        test.worker("GET", "X-Forwarded-Host", "plain",
+                    "hhdeadbeef99.example-collab.com")
+        self.assertEqual(len(test._hits), 1)
+        self.assertEqual(test.vulnerabilities_found, [])
 
     def test_worker_ignores_unreflected(self):
         test = make_test(hhs.HostInjectionTest, FakeSession())
-        test.marker_token = "deadbeef"
+        test.marker_token = "hhdeadbeef99"
         test.request = lambda *a, **k: FakeResponse(text="nothing here")
-        test.worker("GET", "Host", "deadbeef.example-collab.com")
+        test.worker("GET", "Host", "plain", "hhdeadbeef99.example-collab.com")
+        self.assertEqual(test._hits, [])
         self.assertEqual(test.vulnerabilities_found, [])
 
 
