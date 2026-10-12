@@ -9,6 +9,14 @@ was assessed and found clean, and one that was never assessed at all. A scan of
 an unreachable host produces no findings; reporting that as full compliance
 would be worse than producing no report. So a control is only ``Pass`` when a
 check that covers it actually completed, and otherwise says why not.
+
+There is a third case between those two, and it is the one easiest to get
+wrong. Several checks can cover the same requirement. When some of them judged
+it and another recorded that it could not look, the requirement was neither
+assessed nor left alone: it is ``Partly assessed``, and the report names the
+check that was blind and why. Reporting that as ``Pass`` would hand an assessor
+a signed-off requirement on the strength of the checks that happened to run,
+and silently drop the one that could have found the failure.
 """
 
 from collections import namedtuple
@@ -21,12 +29,20 @@ from .mapping import controls_for
 STATUS_FAIL = "Fail"
 STATUS_PASS = "Pass"
 STATUS_NOT_ASSESSED = "Not assessed"
+# Assessed by at least one check, with another that covers it recording why it
+# could not look. Neither a clean result nor an absent one.
+STATUS_PARTLY_ASSESSED = "Partly assessed"
 
 # Ordered worst-first, which is how the summary and the detail are sorted.
-STATUS_ORDER = [STATUS_FAIL, STATUS_NOT_ASSESSED, STATUS_PASS]
+# ``Not assessed`` sits above ``Partly assessed`` because nobody looking at a
+# requirement is worse than somebody looking and finding it clean.
+STATUS_ORDER = [STATUS_FAIL, STATUS_NOT_ASSESSED, STATUS_PARTLY_ASSESSED,
+                STATUS_PASS]
 
 ControlResult = namedtuple(
-    "ControlResult", "control status findings assessed_by not_assessed_because")
+    "ControlResult",
+    "control status findings assessed_by not_assessed_because "
+    "partly_assessed_because")
 
 
 def _emitted_types(check):
@@ -126,7 +142,12 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
         if findings:
             # Evidence of a failure stands on its own; it does not matter
             # whether some other check covering the same control was blocked.
+            # The blind check is still recorded below: a reader deciding how
+            # much the finding list is worth needs to know what was not seen.
             status = STATUS_FAIL
+        elif assessors and blocked:
+            # Judged by somebody, and somebody else said it could not look.
+            status = STATUS_PARTLY_ASSESSED
         elif assessors:
             status = STATUS_PASS
         else:
@@ -135,14 +156,20 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
                 blocked = {"baseline comparison":
                            "no baseline was supplied, so no change detection "
                            "was performed (pass --baseline <previous.json>)"}
+        reasons = sorted(f"{name}: {reason}" for name, reason in blocked.items())
         results.append(ControlResult(
             control=CONTROLS[control_id],
             status=status,
             findings=findings,
             assessed_by=assessors,
-            not_assessed_because=(sorted(f"{name}: {reason}"
-                                         for name, reason in blocked.items())
-                                  if status == STATUS_NOT_ASSESSED else []),
+            not_assessed_because=(reasons if status == STATUS_NOT_ASSESSED
+                                  else []),
+            # Carried on anything that was partly looked at, and on a Fail
+            # too: a reason a check recorded has to be reachable from the
+            # artefact whatever verdict the control ended up with.
+            partly_assessed_because=(
+                reasons if status in (STATUS_PARTLY_ASSESSED, STATUS_FAIL)
+                else []),
         ))
 
     counts = {status: 0 for status in STATUS_ORDER}

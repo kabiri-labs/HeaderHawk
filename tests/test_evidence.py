@@ -4,6 +4,12 @@ The property the whole report rests on: a control is reported as passing only
 when a check that covers it actually completed. A scan that reached nothing
 produces no findings, and reporting that as full compliance would be worse than
 producing no report at all.
+
+The case between the two is ``Partly assessed``: several checks cover one
+requirement, some judged it, and another recorded that it could not look. That
+is not a pass, and the reason the blind check gave has to be readable in both
+renderings - otherwise the one check that could have found the failure drops
+out of the record and the requirement reads as met.
 """
 
 import json
@@ -15,6 +21,7 @@ import requests
 
 import headerhawk as hhs
 from headerhawk.compliance.evidence import (STATUS_FAIL, STATUS_NOT_ASSESSED,
+                                            STATUS_PARTLY_ASSESSED,
                                             STATUS_PASS, build_evidence,
                                             controls_covered_by,
                                             unmapped_findings)
@@ -26,11 +33,14 @@ class _Check:
     """Stand-in for a check that has already run."""
 
     def __init__(self, test_type, emits, assessed=True, findings=(),
-                 skip_reason=None):
+                 skip_reason=None, unassessed=None):
         self.test_type = test_type
         self._emits = tuple(emits)
         self.assessed = assessed
         self.skip_reason = skip_reason
+        # Finding types this check reached but could not judge, as the real
+        # ``skip_type`` records them.
+        self.unassessed = dict(unassessed or {})
         self.vulnerabilities_found = list(findings)
 
     def emitted_types(self):
@@ -98,12 +108,25 @@ class StatusTests(unittest.TestCase):
         evidence = build_evidence(checks, ["https://t/"])
         self.assertEqual(_status_of(evidence, "ASVS-5.0:4.1.3"), STATUS_FAIL)
 
-    def test_one_completed_check_is_enough_to_pass_a_shared_control(self):
+    def test_a_shared_control_with_a_blind_check_does_not_pass(self):
+        # It used to. One check completing was read as having assessed the
+        # control, and the check that said it could not look dropped out of
+        # the record entirely - which is the failure this status exists for.
         checks = [
             _Check("Host Header Injection", ["Host Header Injection"],
                    assessed=True),
             _Check("Auth Bypass", ["Auth Bypass"], assessed=False,
                    skip_reason="no baseline"),
+        ]
+        evidence = build_evidence(checks, ["https://t/"])
+        self.assertEqual(_status_of(evidence, "ASVS-5.0:4.1.3"),
+                         STATUS_PARTLY_ASSESSED)
+
+    def test_a_shared_control_passes_when_nothing_was_blind(self):
+        checks = [
+            _Check("Host Header Injection", ["Host Header Injection"],
+                   assessed=True),
+            _Check("Auth Bypass", ["Auth Bypass"], assessed=True),
         ]
         evidence = build_evidence(checks, ["https://t/"])
         self.assertEqual(_status_of(evidence, "ASVS-5.0:4.1.3"), STATUS_PASS)
@@ -188,6 +211,145 @@ class UnmappedFindingTests(unittest.TestCase):
         body = render_markdown(build_evidence([check], ["https://t/"]),
                                unmapped_findings([check]))
         self.assertIn("Findings Outside the Catalogue", body)
+
+
+class PartlyAssessedTests(unittest.TestCase):
+    """The gap the integration lab found, and what closes it.
+
+    Behind a cache that ignores the query string the unkeyed search refuses to
+    guess and records why. Three other checks map to the same requirement, ran
+    and found nothing. Reporting that requirement as met is the erosion this
+    project exists not to have, so it is reported as partly assessed and the
+    reason is carried into both renderings.
+    """
+
+    BLIND = ("the cache answered a URL this scan had just invented, so the "
+             "query string is not part of its key")
+
+    def _evidence(self):
+        checks = [
+            _Check("Host Header Injection", ["Host Header Injection"],
+                   assessed=True),
+            _Check("Web Cache Poisoning", ["Web Cache Poisoning"],
+                   assessed=True),
+            _Check("Unkeyed Input", ["Unkeyed Input"], assessed=False,
+                   skip_reason=self.BLIND),
+        ]
+        return build_evidence(checks, ["http://querycache/link"],
+                              version="9.9.9", tool_name="HeaderHawk")
+
+    def test_the_control_is_partly_assessed_not_passed(self):
+        self.assertEqual(_status_of(self._evidence(), "ASVS-5.0:4.1.3"),
+                         STATUS_PARTLY_ASSESSED)
+
+    def test_it_still_names_the_checks_that_did_judge_it(self):
+        # Partly assessed is not "nobody looked"; throwing away the checks
+        # that did look would be its own dishonesty.
+        result = _result_for(self._evidence(), "ASVS-5.0:4.1.3")
+        self.assertEqual(result.assessed_by,
+                         ["Host Header Injection", "Web Cache Poisoning"])
+
+    def test_the_reason_the_check_recorded_is_on_the_result(self):
+        result = _result_for(self._evidence(), "ASVS-5.0:4.1.3")
+        self.assertEqual(result.partly_assessed_because,
+                         ["Unkeyed Input: " + self.BLIND])
+
+    def test_not_assessed_because_keeps_its_old_meaning(self):
+        # A consumer reading that field is asking "did anybody look?". The
+        # answer here is yes, so the field stays empty.
+        result = _result_for(self._evidence(), "ASVS-5.0:4.1.3")
+        self.assertEqual(result.not_assessed_because, [])
+
+    def test_the_counts_report_it_as_its_own_status(self):
+        counts = self._evidence()["counts"]
+        self.assertEqual(counts[STATUS_PARTLY_ASSESSED], 1)
+        self.assertEqual(counts[STATUS_PASS], 0)
+
+    def test_a_pass_carries_no_blind_reasons(self):
+        checks = [_Check("Open Redirect", ["Open Redirect"], assessed=True)]
+        result = _result_for(build_evidence(checks, ["https://t/"]),
+                             "ASVS-5.0:3.7.2")
+        self.assertEqual(result.status, STATUS_PASS)
+        self.assertEqual(result.partly_assessed_because, [])
+
+    def test_markdown_says_who_could_not_look_and_why(self):
+        body = render_markdown(self._evidence())
+        self.assertIn("ASVS-5.0:4.1.3 — PARTLY ASSESSED", body)
+        self.assertIn("Not looked at by:", body)
+        self.assertIn(self.BLIND, body)
+
+    def test_markdown_does_not_let_it_read_as_a_pass(self):
+        body = render_markdown(self._evidence())
+        self.assertNotIn("ASVS-5.0:4.1.3 — PASS", body)
+        self.assertIn("this is not a pass", body)
+        self.assertIn("reported as partly assessed", body)
+
+    def test_json_carries_the_reason_in_a_field_of_its_own(self):
+        payload = json.loads(render_json(self._evidence()))
+        control = next(c for c in payload["controls"]
+                       if c["id"] == "ASVS-5.0:4.1.3")
+        self.assertEqual(control["status"], STATUS_PARTLY_ASSESSED)
+        self.assertEqual(control["partly_assessed_because"],
+                         ["Unkeyed Input: " + self.BLIND])
+        self.assertEqual(control["not_assessed_because"], [])
+
+    def test_partly_assessed_sorts_between_not_assessed_and_pass(self):
+        # Nobody looking at a requirement is worse than somebody looking and
+        # finding it clean, so the detail section orders them that way.
+        statuses = [c["status"] for c in
+                    json.loads(render_json(self._evidence()))["controls"]]
+        self.assertLess(statuses.index(STATUS_PARTLY_ASSESSED),
+                        statuses.index(STATUS_PASS))
+        self.assertLess(statuses.index(STATUS_NOT_ASSESSED),
+                        statuses.index(STATUS_PARTLY_ASSESSED))
+
+    def test_a_type_level_skip_partly_assesses_a_shared_control(self):
+        # The other way a check says it could not look: it judged most of
+        # what it covers and left one finding type alone.
+        checks = [
+            _Check("Host Header Injection", ["Host Header Injection"],
+                   assessed=True),
+            _Check("Web Cache Poisoning",
+                   ["Web Cache Poisoning", "Unkeyed Input"], assessed=True,
+                   unassessed={"Unkeyed Input": self.BLIND}),
+        ]
+        evidence = build_evidence(checks, ["http://querycache/link"])
+        result = _result_for(evidence, "ASVS-5.0:4.1.3")
+        self.assertEqual(result.status, STATUS_PARTLY_ASSESSED)
+        self.assertEqual(result.partly_assessed_because,
+                         ["Web Cache Poisoning: " + self.BLIND])
+
+
+class BlindSpotsOnAFailTests(unittest.TestCase):
+    """A finding decides the verdict; it does not decide what was seen."""
+
+    def _evidence(self):
+        checks = [
+            _Check("Host Header Injection", ["Host Header Injection"],
+                   assessed=True,
+                   findings=[_finding("Host Header Injection",
+                                      ["ASVS-5.0:4.1.3"])]),
+            _Check("Unkeyed Input", ["Unkeyed Input"], assessed=False,
+                   skip_reason="the query string is not part of its key"),
+        ]
+        return build_evidence(checks, ["http://querycache/link"])
+
+    def test_the_finding_still_decides_the_verdict(self):
+        self.assertEqual(_status_of(self._evidence(), "ASVS-5.0:4.1.3"),
+                         STATUS_FAIL)
+
+    def test_the_fail_still_records_what_was_not_looked_at(self):
+        # How complete the finding list is depends on it.
+        result = _result_for(self._evidence(), "ASVS-5.0:4.1.3")
+        self.assertEqual(
+            result.partly_assessed_because,
+            ["Unkeyed Input: the query string is not part of its key"])
+
+    def test_markdown_shows_it_under_the_findings(self):
+        body = render_markdown(self._evidence())
+        self.assertIn("ASVS-5.0:4.1.3 — FAIL", body)
+        self.assertIn("Not looked at by:", body)
+        self.assertIn("the query string is not part of its key", body)
 
 
 class RenderingTests(unittest.TestCase):
