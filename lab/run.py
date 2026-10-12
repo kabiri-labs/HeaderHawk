@@ -37,6 +37,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, "/hh")
 
 from headerhawk._meta import __version__
+from headerhawk.core.exitcodes import EXIT_FINDINGS, EXIT_OK
 from headerhawk.core.findings import DEFAULT_MIN_SEVERITY, reportable
 
 LAB = os.path.dirname(os.path.abspath(__file__))
@@ -87,9 +88,9 @@ def scan(scenario):
     the report has to be able to tell them apart.
     """
     name = scenario["id"]
-    findings_path = os.path.join(OUT, name + ".json")
-    evidence_path = os.path.join(OUT, name + ".evidence.json")
-    log_path = os.path.join(OUT, name + ".log")
+    findings_path = _fresh(os.path.join(OUT, name + ".json"))
+    evidence_path = _fresh(os.path.join(OUT, name + ".evidence.json"))
+    log_path = _fresh(os.path.join(OUT, name + ".log"))
     command = ["python", "/hh/headerhawk.py", scenario["target"],
                "--output", findings_path, "--evidence", evidence_path]
     started = time.time()
@@ -110,7 +111,7 @@ def scan(scenario):
     console = (output or b"").decode("utf-8", "replace")
     markdown = None
     if scenario.get("markdown"):
-        markdown_path = os.path.join(OUT, name + ".md")
+        markdown_path = _fresh(os.path.join(OUT, name + ".md"))
         subprocess.run(["python", "/hh/headerhawk.py", scenario["target"],
                         "--output", markdown_path],
                        stdout=subprocess.DEVNULL,
@@ -125,6 +126,23 @@ def scan(scenario):
         "seconds": round(elapsed, 1),
         "command": " ".join(command),
     }
+
+
+def _fresh(path):
+    """Delete an artefact left by an earlier run, and hand back its path.
+
+    ``lab/out`` is bind-mounted and survives teardown. Without this, a scan
+    that dies before writing is compared against the files the *previous* run
+    left behind - and a scenario passes on data that has nothing to do with
+    it, which is the one thing a lab must never do.
+    """
+    try:
+        os.remove(path)
+    except OSError:
+        # Not there, or not removable. Either way nothing stale is readable,
+        # and a path that cannot be written is caught by the scan's exit code.
+        pass
+    return path
 
 
 def _load(path, fallback):
@@ -194,30 +212,51 @@ def compare(scenario, result):
             "The scan did not finish inside %ds, so nothing it did or did not "
             "report means anything." % SCAN_TIMEOUT)
         return verdict
+    if result["exit_code"] not in (EXIT_OK, EXIT_FINDINGS):
+        # The scanner defines three codes and only these two mean it ran: 2 is
+        # its own word for "could not run meaningfully", and anything else did
+        # not leave through the CLI at all. Comparing either would let a
+        # scenario whose expectations are all absences - a secure endpoint,
+        # a closed cache - report every one of them as held, on the strength
+        # of a scan that never happened.
+        verdict["inconclusive"].append(
+            "The scan exited %s, which is not one of the two codes that mean "
+            "it ran (%d for nothing found, %d for findings), so neither what "
+            "it reported nor what it did not report means anything."
+            % (result["exit_code"], EXIT_OK, EXIT_FINDINGS))
+        return verdict
     if not isinstance(findings, list):
         verdict["inconclusive"].append(
             "The scan wrote no findings file, so there is nothing to compare.")
         return verdict
 
-    claimed = []
+    # One expectation accounts for one finding, and the next expectation has
+    # to find its own. Claiming every match would let a regression that
+    # reports the same defect twice hide behind a single expectation, and
+    # "one defect, one finding" is a claim this tool makes. A duplicate now
+    # falls through to the exhaustive sweep below and is reported there as
+    # what it is: something a user was shown that nothing declared.
+    claimed = set()
     for expectation in scenario.get("expect", []):
-        hits = [finding for finding in findings if matches(expectation, finding)]
-        if hits:
-            claimed.extend(id(finding) for finding in hits)
-            verdict["true_positive"].append({
-                "expectation": expectation,
-                "finding": hits[0],
-                "count": len(hits),
-            })
-        else:
+        hit = next((finding for finding in findings
+                    if id(finding) not in claimed
+                    and matches(expectation, finding)), None)
+        if hit is None:
             verdict["false_negative"].append({"expectation": expectation})
+            continue
+        claimed.add(id(hit))
+        verdict["true_positive"].append({
+            "expectation": expectation,
+            "finding": hit,
+        })
 
     for forbidden in scenario.get("forbid", []):
         hits = [finding for finding in findings if matches(forbidden, finding)]
         if hits:
-            # Counted once, as the thing the scenario named. Without this the
-            # exhaustive sweep below reports it a second time as undeclared.
-            claimed.extend(id(finding) for finding in hits)
+            # Counted once, as the thing the scenario named: a scenario
+            # forbids a kind of finding, not a number of them. Without this
+            # the exhaustive sweep reports each one again as undeclared.
+            claimed.update(id(finding) for finding in hits)
             verdict["false_positive"].append({
                 "reason": "forbidden by the scenario",
                 "expectation": forbidden,
@@ -266,7 +305,6 @@ def compare(scenario, result):
             "expectation": {"control": control["id"],
                             "why": control.get("why", "")},
             "finding": {"analysis": "%s: %s" % (status, because or "-")},
-            "count": 1,
         })
 
     for rule in scenario.get("log_require", []):
@@ -276,7 +314,6 @@ def compare(scenario, result):
             verdict["true_positive"].append({
                 "expectation": {"log": rule["text"], "why": rule.get("why", "")},
                 "finding": {"analysis": "said so on the console"},
-                "count": 1,
             })
         else:
             verdict["false_negative"].append({
