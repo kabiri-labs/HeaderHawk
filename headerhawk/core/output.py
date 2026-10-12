@@ -41,26 +41,24 @@ def is_quiet():
 
 
 def blind_spots(all_tests):
-    """What each check said it could not judge, as ``(check, reason)`` pairs.
+    """Checks the target stopped from looking, as ``(check, reason)`` pairs.
 
-    A check reports this two ways: ``skip`` when the whole check could not run,
-    and ``skip_type`` when it judged most of what it covers and had to leave one
-    finding type alone. Both are a reason somebody recorded, and both have to
-    reach the person reading the output - otherwise a scan that could not look
-    and a scan that found nothing print the same thing.
+    Without this, a scan that could not look and a scan that found nothing
+    print the same thing - which is the one difference an empty findings list
+    cannot convey on its own.
+
+    Only ``skip``: a check that could not complete. A ``skip_type`` means the
+    check had nothing to judge on this surface, which is a statement about the
+    response rather than about the scan, and the evidence report is where it
+    belongs.
     """
     blind = []
     for test in all_tests:
-        name = getattr(test, "test_type", type(test).__name__)
-        if not getattr(test, "assessed", True):
-            reason = getattr(test, "skip_reason", None) or "the check did not run"
-            blind.append((name, reason))
-            # The whole check stood down; its per-type reasons say no more.
+        if getattr(test, "assessed", True):
             continue
-        for test_type, reason in sorted(
-                (getattr(test, "unassessed", None) or {}).items()):
-            label = name if test_type == name else f"{name} ({test_type})"
-            blind.append((label, reason))
+        name = getattr(test, "test_type", type(test).__name__)
+        reason = getattr(test, "skip_reason", None) or "the check did not run"
+        blind.append((name, reason))
     return blind
 
 

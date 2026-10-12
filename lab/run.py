@@ -188,10 +188,19 @@ def matches(expectation, finding):
 
 
 def control_status(evidence, control_id):
-    """The status and reason this evidence report gives one control."""
+    """The status and reason this evidence report gives one control.
+
+    The reason lives in one of two fields depending on the verdict:
+    ``not_assessed_because`` when nobody judged the control, and
+    ``partly_assessed_because`` when some checks did and another could not
+    look. A scenario asserts the reason, not which field carried it, so both
+    are read.
+    """
     for control in evidence.get("controls", []):
         if control.get("id") == control_id:
-            return control.get("status"), control.get("not_assessed_because")
+            reasons = list(control.get("not_assessed_because") or [])
+            reasons += list(control.get("partly_assessed_because") or [])
+            return control.get("status"), reasons
     return None, None
 
 

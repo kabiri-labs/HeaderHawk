@@ -92,7 +92,9 @@ question:
   and a scan that could not look produce the same findings file, and the
   difference is the whole point: `{"status": "Not assessed",
   "reason_contains": "..."}` asserts that a control nobody could assess says
-  so.
+  so, and `{"status": "Partly assessed", ...}` that a control some checks
+  judged while another could not look is not reported as a pass. The reason is
+  read from whichever field the status puts it in.
 - `log_require` asserts that the scan told the user something on the console -
   which is where a check that refused to guess explains why.
 - `md_forbid` asserts that something is **not** in the Markdown report at the

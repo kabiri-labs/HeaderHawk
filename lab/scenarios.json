@@ -382,9 +382,17 @@
         }
       ],
       "judgement": [
-        "**Not produced, and it is the most serious thing this lab found.** The search did refuse to guess: it stopped because a cache answered a URL the scan had just invented. But the reason reaches nobody. Three places were checked on this run. The console prints the banner, the progress and `No vulnerabilities were found.`, and nothing about a check that could not look. The findings file is `[]`. And the evidence report says ASVS-5.0:4.1.3 **Pass**, assessed by the four checks that did run, with `not_assessed_because: []` - 25 Pass, 1 Not assessed, and that one is the baseline requirement, not this. The string `not part of its key` appears nowhere in either artefact.",
-        "Why it happens: `skip()` records the reason on the check, and `compliance/evidence.py` reads it only for controls that end up with no assessor at all. Here three other checks also map to 4.1.3, found nothing, and carried the control to Pass - so the one check that could have found a poisoning gadget on this target drops out of the record silently. A reader of the evidence file is told the requirement was met.",
-        "This is the erosion the project's own notes name: an unassessable check falling through as a pass. It is reported and not fixed, because the fix is a change to what the evidence report promises - a control assessed by some checks and blocked for others needs a third state, or a per-check note beside the Pass - and this pull request does not touch detection or reporting logic. Reproduce it with `python lab/lab.py --only cache-blind-query-key` and read `out/cache-blind-query-key.evidence.json`."
+        "**Produced, and this is the gap's own scenario.** The search refuses to guess - it stops because a cache answered a URL the scan had just invented - and the reason now reaches all three places that were checked when it did not. The console prints a `Could not assess` block naming `Unkeyed Input` and its reason, and qualifies `No vulnerabilities were found` instead of printing it bare. The findings file is still `[]`, correctly: nothing was learned, so inventing a finding would be the opposite failure. And the evidence report files ASVS-5.0:4.1.3 as **Partly assessed**, naming the four checks that did judge it and, under `partly_assessed_because`, the one that could not and why.",
+        "What changed: `compliance/evidence.py` now tracks a check the target blocked apart from a check that had nothing to look at. The first costs a control its pass - it is the check whose silence could be hiding the finding - and the second does not, because \"this reply is JSON, so there is no document for a CSP to act on\" says what one check saw rather than whether the requirement is met. Only the first reaches the new status, which is why `posture-json` below still reports its three document controls as not assessed.",
+        "The claim the project leads with is that it tells you what it could not assess instead of counting it as a pass. Before this, a control assessed by some checks and blocked for others lost the fact that anybody was blind, and 4.1.3 read **Pass** with `not_assessed_because: []`. Reproduce the fix with `python lab/lab.py --only cache-blind-query-key` and read `out/cache-blind-query-key.evidence.json`."
+      ],
+      "controls": [
+        {
+          "id": "ASVS-5.0:4.1.3",
+          "status": "Partly assessed",
+          "reason_contains": "not part of its key",
+          "why": "The requirement four other checks did assess, and the one that could have found a poisoning gadget here could not look. Declared as partly assessed rather than Pass because a reader of the evidence file must not be told the requirement was met on the strength of the checks that happened to run."
+        }
       ]
     },
     {

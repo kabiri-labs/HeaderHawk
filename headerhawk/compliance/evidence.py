@@ -17,6 +17,15 @@ assessed nor left alone: it is ``Partly assessed``, and the report names the
 check that was blind and why. Reporting that as ``Pass`` would hand an assessor
 a signed-off requirement on the strength of the checks that happened to run,
 and silently drop the one that could have found the failure.
+
+"Could not look" is narrower than "did not judge", and the difference decides
+the status. A check blocked by the target - a cache that answers every URL the
+scan invents from one stored response - is blind, and the control it covers
+cannot be signed off on the strength of its siblings. A check with nothing to
+look at is not: a JSON reply has no document for a framing or CSP requirement
+to act on, so where another check did judge that control, nothing is missing
+from the record. ``skip`` records the first, ``skip_type`` the second, and only
+the first costs a control its pass.
 """
 
 from collections import namedtuple
@@ -110,7 +119,14 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
     """
     findings_by_control = {}
     assessed_by = {}
-    blocked_by = {}
+    # A check that could not look at all, as control -> {check: reason}. This
+    # is the one that costs a control its pass.
+    blind_by = {}
+    # A check that had nothing to look at, same shape. "This reply is JSON, so
+    # there is no document for a CSP to act on" says what this check saw, not
+    # whether the requirement is met: where another check did judge the
+    # control, nothing is missing from the record.
+    inapplicable_by = {}
 
     for test in tests:
         covered = controls_covered_by(test)
@@ -121,11 +137,11 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
             for control_id in controls_assessed_by(test):
                 assessed_by.setdefault(control_id, set()).add(name)
             for control_id, reason in controls_unassessed_by(test).items():
-                blocked_by.setdefault(control_id, {})[name] = reason
+                inapplicable_by.setdefault(control_id, {})[name] = reason
         else:
             reason = getattr(test, "skip_reason", None) or "the check did not run"
             for control_id in covered:
-                blocked_by.setdefault(control_id, {})[name] = reason
+                blind_by.setdefault(control_id, {})[name] = reason
         for finding in getattr(test, "vulnerabilities_found", []):
             for control_id in finding.get("controls") or ():
                 findings_by_control.setdefault(control_id, []).append(finding)
@@ -138,38 +154,47 @@ def build_evidence(tests, targets, stats=None, version=None, tool_name=None,
     for control_id in sorted(CONTROLS):
         findings = findings_by_control.get(control_id, [])
         assessors = sorted(assessed_by.get(control_id, ()))
-        blocked = blocked_by.get(control_id, {})
+        blind = dict(blind_by.get(control_id, {}))
+        inapplicable = inapplicable_by.get(control_id, {})
         if findings:
             # Evidence of a failure stands on its own; it does not matter
-            # whether some other check covering the same control was blocked.
+            # whether some other check covering the same control was blind.
             # The blind check is still recorded below: a reader deciding how
-            # much the finding list is worth needs to know what was not seen.
+            # complete the finding list is needs to know what was not seen.
             status = STATUS_FAIL
-        elif assessors and blocked:
+        elif assessors and blind:
             # Judged by somebody, and somebody else said it could not look.
             status = STATUS_PARTLY_ASSESSED
         elif assessors:
             status = STATUS_PASS
         else:
             status = STATUS_NOT_ASSESSED
-            if control_id == DRIFT_CONTROL and not blocked:
-                blocked = {"baseline comparison":
-                           "no baseline was supplied, so no change detection "
-                           "was performed (pass --baseline <previous.json>)"}
-        reasons = sorted(f"{name}: {reason}" for name, reason in blocked.items())
+            if control_id == DRIFT_CONTROL and not blind and not inapplicable:
+                blind = {"baseline comparison":
+                         "no baseline was supplied, so no change detection "
+                         "was performed (pass --baseline <previous.json>)"}
+        blind_reasons = sorted(f"{name}: {reason}"
+                               for name, reason in blind.items())
         results.append(ControlResult(
             control=CONTROLS[control_id],
             status=status,
             findings=findings,
             assessed_by=assessors,
-            not_assessed_because=(reasons if status == STATUS_NOT_ASSESSED
-                                  else []),
-            # Carried on anything that was partly looked at, and on a Fail
-            # too: a reason a check recorded has to be reachable from the
-            # artefact whatever verdict the control ended up with.
+            # Nobody judged this at all, so every reason anybody gave for not
+            # judging it belongs here - whether they could not look or had
+            # nothing to look at.
+            not_assessed_because=(
+                sorted(blind_reasons +
+                       [f"{name}: {reason}"
+                        for name, reason in inapplicable.items()])
+                if status == STATUS_NOT_ASSESSED else []),
+            # Only a check that could not look. Carried on a partly assessed
+            # control and on a Fail too: a blind spot a check recorded has to
+            # be reachable from the artefact whatever verdict the control
+            # ended up with.
             partly_assessed_because=(
-                reasons if status in (STATUS_PARTLY_ASSESSED, STATUS_FAIL)
-                else []),
+                blind_reasons
+                if status in (STATUS_PARTLY_ASSESSED, STATUS_FAIL) else []),
         ))
 
     counts = {status: 0 for status in STATUS_ORDER}
