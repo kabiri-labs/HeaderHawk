@@ -122,19 +122,29 @@ class BaseTest:
         self._requests_ok += 1
 
     def skip_type(self, test_type, reason):
-        """Record that one finding type this check emits was not judged.
+        """Record that one finding type this check emits had nothing to judge.
 
-        The reason is printed in the evidence report next to the requirements
-        that type is the evidence for, so a control nobody looked at is never
-        reported as passing.
+        For a surface the control does not apply to: a JSON reply has no
+        document for a framing or CSP requirement to act on. The reason is
+        printed in the evidence report next to the requirements that type is
+        the evidence for, so a control nobody looked at is never reported as
+        passing - but where another check did judge that control, this does not
+        detract from its result.
+
+        Not for a check the target blocked. That is ``skip``: being unable to
+        look is what costs a control its pass, and routing it through here
+        would let it read as assessed.
         """
         self.unassessed[test_type] = reason
 
     def skip(self, reason):
         """Record that the check could not complete, and why.
 
-        The reason is printed in the evidence report next to the controls that
-        were consequently left unassessed.
+        The reason is printed in the evidence report next to the controls this
+        check covers. Where nothing else assessed them they read as unassessed;
+        where something did, they read as partly assessed rather than as a
+        pass, because this is the check whose silence could be hiding the
+        finding.
         """
         self._skip_reason = reason
 

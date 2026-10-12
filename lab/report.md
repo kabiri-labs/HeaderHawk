@@ -2,8 +2,8 @@
 
 What this scanner does against real servers, compared with what was declared before it ran.
 
-- HeaderHawk **2.20.0**, run as `python headerhawk.py <target>` with the shipped defaults.
-- Generated 2026-10-12 05:30 UTC by `lab/run.py`. Re-run it with `python lab/lab.py`.
+- HeaderHawk **2.21.0**, run as `python headerhawk.py <target>` with the shipped defaults.
+- Generated 2026-10-12 05:54 UTC by `lab/run.py`. Re-run it with `python lab/lab.py`.
 - Reporting threshold: **medium and above**, the default. Findings below it are listed where they occur and are not counted against the scanner.
 - The intrusive request-smuggling confirmation needs `--enable-desync` and was never sent.
 
@@ -11,9 +11,9 @@ What this scanner does against real servers, compared with what was declared bef
 
 | | Count | What it means |
 | --- | --- | --- |
-| True positives | 34 | A finding the scenario declared, produced as declared. |
+| True positives | 36 | A finding the scenario declared, produced as declared. |
 | Absences held | 39 | Something the scenario forbade, and the scanner did not report. |
-| False negatives | 1 | Declared and not produced. |
+| False negatives | 0 | Declared and not produced. |
 | False positives | 0 | Reported to a user and declared by nothing, or explicitly forbidden. |
 | Inconclusive | 0 | The run could not settle it either way. |
 
@@ -32,7 +32,7 @@ What this scanner does against real servers, compared with what was declared bef
 | [cors-allowlist](#cors-allowlist) | scanner -> app | CORS | 0 | 5 | 0 | 0 | 0 |
 | [cache-poisoning-default-key](#cache-poisoning-default-key) | scanner -> varnish (default key) -> app | Web Cache Poisoning | 1 | 0 | 0 | 0 | 0 |
 | [cache-poisoning-keyed](#cache-poisoning-keyed) | scanner -> varnish (header in the key) -> app | Web Cache Poisoning | 1 | 1 | 0 | 0 | 0 |
-| [cache-blind-query-key](#cache-blind-query-key) | scanner -> nginx (key without the query string) -> app | Unkeyed Input | 0 | 2 | 1 | 0 | 0 |
+| [cache-blind-query-key](#cache-blind-query-key) | scanner -> nginx (key without the query string) -> app | Unkeyed Input | 2 | 2 | 0 | 0 | 0 |
 | [cache-deception](#cache-deception) | scanner -> app | Web Cache Deception | 1 | 0 | 0 | 0 | 0 |
 | [posture-weak](#posture-weak) | scanner -> app | Response header posture | 10 | 4 | 0 | 0 | 0 |
 | [posture-hardened](#posture-hardened) | scanner -> app | Response header posture | 0 | 11 | 0 | 0 | 0 |
@@ -55,10 +55,9 @@ What this scanner does against real servers, compared with what was declared bef
 
 ### cache-blind-query-key
 
-- **Not produced** (the scan never said it): the scan says 'not part of its key'. Declared because this is the property the tool leads with: a check that could not look says so instead of letting the target read as clean. The reason exists inside the check - it is what PR #37 added - and the question this asserts is whether it reaches the person reading the output.
-- **Judgement:** **Not produced, and it is the most serious thing this lab found.** The search did refuse to guess: it stopped because a cache answered a URL the scan had just invented. But the reason reaches nobody. Three places were checked on this run. The console prints the banner, the progress and `No vulnerabilities were found.`, and nothing about a check that could not look. The findings file is `[]`. And the evidence report says ASVS-5.0:4.1.3 **Pass**, assessed by the four checks that did run, with `not_assessed_because: []` - 25 Pass, 1 Not assessed, and that one is the baseline requirement, not this. The string `not part of its key` appears nowhere in either artefact.
-- **Judgement:** Why it happens: `skip()` records the reason on the check, and `compliance/evidence.py` reads it only for controls that end up with no assessor at all. Here three other checks also map to 4.1.3, found nothing, and carried the control to Pass - so the one check that could have found a poisoning gadget on this target drops out of the record silently. A reader of the evidence file is told the requirement was met.
-- **Judgement:** This is the erosion the project's own notes name: an unassessable check falling through as a pass. It is reported and not fixed, because the fix is a change to what the evidence report promises - a control assessed by some checks and blocked for others needs a third state, or a per-check note beside the Pass - and this pull request does not touch detection or reporting logic. Reproduce it with `python lab/lab.py --only cache-blind-query-key` and read `out/cache-blind-query-key.evidence.json`.
+- **Judgement:** **Produced, and this is the gap's own scenario.** The search refuses to guess - it stops because a cache answered a URL the scan had just invented - and the reason now reaches all three places that were checked when it did not. The console prints a `Could not assess` block naming `Unkeyed Input` and its reason, and qualifies `No vulnerabilities were found` instead of printing it bare. The findings file is still `[]`, correctly: nothing was learned, so inventing a finding would be the opposite failure. And the evidence report files ASVS-5.0:4.1.3 as **Partly assessed**, naming the four checks that did judge it and, under `partly_assessed_because`, the one that could not and why.
+- **Judgement:** What changed: `compliance/evidence.py` now tracks a check the target blocked apart from a check that had nothing to look at. The first costs a control its pass - it is the check whose silence could be hiding the finding - and the second does not, because "this reply is JSON, so there is no document for a CSP to act on" says what one check saw rather than whether the requirement is met. Only the first reaches the new status, which is why `posture-json` below still reports its three document controls as not assessed.
+- **Judgement:** The claim the project leads with is that it tells you what it could not assess instead of counting it as a pass. Before this, a control assessed by some checks and blocked for others lost the fact that anybody was blind, and 4.1.3 read **Pass** with `not_assessed_because: []`. Reproduce the fix with `python lab/lab.py --only cache-blind-query-key` and read `out/cache-blind-query-key.evidence.json`.
 
 ### posture-redirect-attribution
 
@@ -80,14 +79,14 @@ A forwarding header becomes the host of a link the page points a browser at. Doe
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Host Header Injection / Vulnerable / confirmed / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh78da1c84de81.example-collab.com) in the response body, and the same probe produced it again on a second request. Shape(s) reflected: appended to a |
+| Host Header Injection / Vulnerable / confirmed / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh379b339eceae.example-collab.com) in the response body, and the same probe produced it again on a second request. Shape(s) reflected: appended to a |
 | Unkeyed Input / Potentially Vulnerable / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' changes the response - the marker was reflected in the response - so the application honours a header field an intermediary is meant to own. No cache in front of this endpoint served the changed response back, so poisoning is not demonstrate |
 | not: Web Cache Poisoning | absent, as declared | - |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh78da1c84de81.example-collab.com' 'http://app:8000/link'
+curl -s -i -H 'X-Forwarded-Host: hh379b339eceae.example-collab.com' 'http://app:8000/link'
 ```
 
 <a id="host-injection-echo-only"></a>
@@ -99,7 +98,7 @@ The same header, printed as text and pointed at by nothing. A scanner that calls
 - **Target:** `http://app:8000/echo`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/echo --output /out/host-injection-echo-only.json --evidence /out/host-injection-echo-only.evidence.json`
-- **Exit code:** 1, in 18.2s
+- **Exit code:** 1, in 18.3s
 - **Evidence:** `out/host-injection-echo-only.json`, `out/host-injection-echo-only.evidence.json`, `out/host-injection-echo-only.log`
 
 | Declared | Verdict | What the scanner said |
@@ -111,7 +110,7 @@ The same header, printed as text and pointed at by nothing. A scanner that calls
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh619296907fc7.example-collab.com' 'http://app:8000/echo'
+curl -s -i -H 'X-Forwarded-Host: hheff212d7f53d.example-collab.com' 'http://app:8000/echo'
 ```
 
 <a id="host-injection-proxy-fixed"></a>
@@ -123,7 +122,7 @@ The same application, behind a proxy that sets the forwarding headers itself. Th
 - **Target:** `http://allowed.lab/link`
 - **Stack:** scanner -> nginx -> app
 - **Command:** `python /hh/headerhawk.py http://allowed.lab/link --output /out/host-injection-proxy-fixed.json --evidence /out/host-injection-proxy-fixed.evidence.json`
-- **Exit code:** 0, in 1.0s
+- **Exit code:** 0, in 1.1s
 - **Evidence:** `out/host-injection-proxy-fixed.json`, `out/host-injection-proxy-fixed.evidence.json`, `out/host-injection-proxy-fixed.log`
 
 | Declared | Verdict | What the scanner said |
@@ -141,7 +140,7 @@ An application that reads every Host header it was sent, and trusts an absolute 
 - **Target:** `http://app:8000/hostreflect`
 - **Stack:** scanner -> app (raw HTTP)
 - **Command:** `python /hh/headerhawk.py http://app:8000/hostreflect --output /out/host-bypass-reflected.json --evidence /out/host-bypass-reflected.evidence.json`
-- **Exit code:** 1, in 17.6s
+- **Exit code:** 1, in 17.7s
 - **Evidence:** `out/host-bypass-reflected.json`, `out/host-bypass-reflected.evidence.json`, `out/host-bypass-reflected.log`
 
 | Declared | Verdict | What the scanner said |
@@ -159,7 +158,7 @@ An application that reads every Host header it was sent, and trusts an absolute 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Host: app.hh2fd8d76580c9.example-collab.com' 'http://app:8000/hostreflect'
+curl -s -i -H 'Host: app.hh6959187f1f9c.example-collab.com' 'http://app:8000/hostreflect'
 ```
 
 <a id="host-bypass-guarded"></a>
@@ -171,7 +170,7 @@ A front-end that answers every host it does not know with 403. Does any raw shap
 - **Target:** `http://proxy/hostreflect`
 - **Stack:** scanner -> nginx (unknown host refused) -> app
 - **Command:** `python /hh/headerhawk.py http://proxy/hostreflect --output /out/host-bypass-guarded.json --evidence /out/host-bypass-guarded.evidence.json`
-- **Exit code:** 0, in 1.0s
+- **Exit code:** 0, in 0.9s
 - **Evidence:** `out/host-bypass-guarded.json`, `out/host-bypass-guarded.evidence.json`, `out/host-bypass-guarded.log`
 
 | Declared | Verdict | What the scanner said |
@@ -196,11 +195,11 @@ The Host header decides where a 302 sends a browser. Does the scanner confirm it
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Open Redirect / Vulnerable / confirmed / Medium / Host | produced | The redirect target follows the 'Host' header: 'https://hh6ebadea9ef5e.example-collab.com/home' points at a host minted for this scan, on a 302 a browser follows, and an identical second probe redirected the same way. No site redirects there for its own reason |
-| Host Header Poisoning / Vulnerable / confirmed / Medium / Host | produced | 'Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh60407c89faa0.example-collab.com) in the 'Location' header, and the same probe produced it again on a second request. Shape(s) reflected: appended to a list, p |
+| Open Redirect / Vulnerable / confirmed / Medium / Host | produced | The redirect target follows the 'Host' header: 'https://hh8b0eafdfd8ca.example-collab.com/home' points at a host minted for this scan, on a 302 a browser follows, and an identical second probe redirected the same way. No site redirects there for its own reason |
+| Host Header Poisoning / Vulnerable / confirmed / Medium / Host | produced | 'Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh54b94dfaa496.example-collab.com) in the 'Location' header, and the same probe produced it again on a second request. Shape(s) reflected: appended to a list, p |
 | Host Header Bypass / Indented (line-folded) Host header | produced | Bypass technique: Indented (line-folded) Host header. Marker reflected in header(s): ['Host'] Nothing here was refusing an unknown host - a well-formed request carrying one was answered 302, not refused - so no refusal was bypassed. What this shape shows is a  |
 | Host Header Bypass / Tab-folded Host header | produced | Bypass technique: Tab-folded Host header. Marker reflected in header(s): ['Host'] Nothing here was refusing an unknown host - a well-formed request carrying one was answered 302, not refused - so no refusal was bypassed. What this shape shows is a parser accep |
-| Host Header Bypass / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in 'Location': https://hh1e325242cc8e.example-collab.com/home Nothing here was refusing an unknown host - a well-formed request carrying one was answered 302, not refused - so no refusal |
+| Host Header Bypass / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in 'Location': https://hhddd15a8a2898.example-collab.com/home Nothing here was refusing an unknown host - a well-formed request carrying one was answered 302, not refused - so no refusal |
 | not: Host Header Bypass / Duplicate Host header | absent, as declared | - |
 | not: Host Header Bypass / Host override | absent, as declared | - |
 
@@ -209,7 +208,7 @@ The Host header decides where a 302 sends a browser. Does the scanner confirm it
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Host: hh60407c89faa0.example-collab.com' 'http://app:8000/redirect'
+curl -s -i -H 'Host: hh54b94dfaa496.example-collab.com' 'http://app:8000/redirect'
 ```
 
 <a id="open-redirect-canonical"></a>
@@ -239,18 +238,18 @@ Any origin mirrored back, with credentials. Both halves of that are findings. Do
 - **Target:** `http://app:8000/cors`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/cors --output /out/cors-reflected.json --evidence /out/cors-reflected.evidence.json`
-- **Exit code:** 1, in 17.5s
+- **Exit code:** 1, in 17.4s
 - **Evidence:** `out/cors-reflected.json`, `out/cors-reflected.evidence.json`, `out/cors-reflected.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| CORS Origin Reflection / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin' echoed a unique origin that cannot exist (http://hhc69627d717e5.example-collab.com), so the server reflects whatever Origin it is sent instead of validating against an allowlist; credentials are allowed, so an attacker's page can  |
+| CORS Origin Reflection / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin' echoed a unique origin that cannot exist (http://hh1ad3410e5f14.example-collab.com), so the server reflects whatever Origin it is sent instead of validating against an allowlist; credentials are allowed, so an attacker's page can  |
 | CORS Null Origin / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin: null' is returned for 'Origin: null', which any sandboxed iframe or redirected request can present; credentials are allowed, so an attacker's page can read authenticated responses. |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Origin: http://hhc69627d717e5.example-collab.com' 'http://app:8000/cors'
+curl -s -i -H 'Origin: http://hh1ad3410e5f14.example-collab.com' 'http://app:8000/cors'
 ```
 
 <a id="cors-allowlist"></a>
@@ -262,7 +261,7 @@ One origin on an allowlist and no CORS headers for anyone else. Does the scanner
 - **Target:** `http://app:8000/secure/cors`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/secure/cors --output /out/cors-allowlist.json --evidence /out/cors-allowlist.evidence.json`
-- **Exit code:** 0, in 17.6s
+- **Exit code:** 0, in 17.7s
 - **Evidence:** `out/cors-allowlist.json`, `out/cors-allowlist.evidence.json`, `out/cors-allowlist.log`
 
 | Declared | Verdict | What the scanner said |
@@ -289,12 +288,12 @@ A cache with the key it ships with, in front of an application that builds links
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Web Cache Poisoning / Vulnerable / High / X-Forwarded-Host | produced | 'X-Forwarded-Host' was found by search rather than from a fixed list, and is unkeyed: the poisoned response was served to a request that never carried the header. Cache headers: {'Age': '0', 'X-Varnish': '229409 229408'}. |
+| Web Cache Poisoning / Vulnerable / High / X-Forwarded-Host | produced | 'X-Forwarded-Host' was found by search rather than from a fixed list, and is unkeyed: the poisoned response was served to a request that never carried the header. Cache headers: {'Age': '0', 'X-Varnish': '163875 163874'}. |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh3f64fafdb918.example-collab.com' 'http://cache/link?cb=hh84c3b550ad'
+curl -s -i -H 'X-Forwarded-Host: hh6f370eb0fee1.example-collab.com' 'http://cache/link?cb=hh9955b6a511'
 ```
 
 <a id="cache-poisoning-keyed"></a>
@@ -306,7 +305,7 @@ The same cache with the header added to the key. The application still honours i
 - **Target:** `http://cache-keyed/link`
 - **Stack:** scanner -> varnish (header in the key) -> app
 - **Command:** `python /hh/headerhawk.py http://cache-keyed/link --output /out/cache-poisoning-keyed.json --evidence /out/cache-poisoning-keyed.evidence.json`
-- **Exit code:** 1, in 5.9s
+- **Exit code:** 1, in 6.1s
 - **Evidence:** `out/cache-poisoning-keyed.json`, `out/cache-poisoning-keyed.evidence.json`, `out/cache-poisoning-keyed.log`
 
 | Declared | Verdict | What the scanner said |
@@ -319,7 +318,7 @@ Also reported here, outside what this scenario asserts: Host Header Injection / 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hhcb3b5736bf84.example-collab.com' 'http://cache-keyed/link'
+curl -s -i -H 'X-Forwarded-Host: hh4b9952b0c8a2.example-collab.com' 'http://cache-keyed/link'
 ```
 
 <a id="cache-blind-query-key"></a>
@@ -331,20 +330,21 @@ A cache that ignores the query string answers every cache-buster from one stored
 - **Target:** `http://querycache/link`
 - **Stack:** scanner -> nginx (key without the query string) -> app
 - **Command:** `python /hh/headerhawk.py http://querycache/link --output /out/cache-blind-query-key.json --evidence /out/cache-blind-query-key.evidence.json`
-- **Exit code:** 0, in 1.1s
+- **Exit code:** 0, in 1.0s
 - **Evidence:** `out/cache-blind-query-key.json`, `out/cache-blind-query-key.evidence.json`, `out/cache-blind-query-key.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
+| control ASVS-5.0:4.1.3 | produced | Partly assessed: ["Unkeyed Input: a cache answered a URL this scan had just invented ('X-Cache: HIT'), so the query string is not part of its key: a cache-buster cannot tell one probe from another here, every candidate would read as changing nothing, and a cle |
+| the scan says 'not part of its key' | produced | said so on the console |
 | not: Unkeyed Input | absent, as declared | - |
 | not: Web Cache Poisoning | absent, as declared | - |
-| the scan says 'not part of its key' | **not produced** | the scan never said it |
 
-**Judgement.** **Not produced, and it is the most serious thing this lab found.** The search did refuse to guess: it stopped because a cache answered a URL the scan had just invented. But the reason reaches nobody. Three places were checked on this run. The console prints the banner, the progress and `No vulnerabilities were found.`, and nothing about a check that could not look. The findings file is `[]`. And the evidence report says ASVS-5.0:4.1.3 **Pass**, assessed by the four checks that did run, with `not_assessed_because: []` - 25 Pass, 1 Not assessed, and that one is the baseline requirement, not this. The string `not part of its key` appears nowhere in either artefact.
+**Judgement.** **Produced, and this is the gap's own scenario.** The search refuses to guess - it stops because a cache answered a URL the scan had just invented - and the reason now reaches all three places that were checked when it did not. The console prints a `Could not assess` block naming `Unkeyed Input` and its reason, and qualifies `No vulnerabilities were found` instead of printing it bare. The findings file is still `[]`, correctly: nothing was learned, so inventing a finding would be the opposite failure. And the evidence report files ASVS-5.0:4.1.3 as **Partly assessed**, naming the four checks that did judge it and, under `partly_assessed_because`, the one that could not and why.
 
-**Judgement.** Why it happens: `skip()` records the reason on the check, and `compliance/evidence.py` reads it only for controls that end up with no assessor at all. Here three other checks also map to 4.1.3, found nothing, and carried the control to Pass - so the one check that could have found a poisoning gadget on this target drops out of the record silently. A reader of the evidence file is told the requirement was met.
+**Judgement.** What changed: `compliance/evidence.py` now tracks a check the target blocked apart from a check that had nothing to look at. The first costs a control its pass - it is the check whose silence could be hiding the finding - and the second does not, because "this reply is JSON, so there is no document for a CSP to act on" says what one check saw rather than whether the requirement is met. Only the first reaches the new status, which is why `posture-json` below still reports its three document controls as not assessed.
 
-**Judgement.** This is the erosion the project's own notes name: an unassessable check falling through as a pass. It is reported and not fixed, because the fix is a change to what the evidence report promises - a control assessed by some checks and blocked for others needs a third state, or a per-check note beside the Pass - and this pull request does not touch detection or reporting logic. Reproduce it with `python lab/lab.py --only cache-blind-query-key` and read `out/cache-blind-query-key.evidence.json`.
+**Judgement.** The claim the project leads with is that it tells you what it could not assess instead of counting it as a pass. Before this, a control assessed by some checks and blocked for others lost the fact that anybody was blind, and 4.1.3 read **Pass** with `not_assessed_because: []`. Reproduce the fix with `python lab/lab.py --only cache-blind-query-key` and read `out/cache-blind-query-key.evidence.json`.
 
 <a id="cache-deception"></a>
 
@@ -377,7 +377,7 @@ A page with no response-header posture at all, over plaintext. Does the scanner 
 - **Target:** `http://app:8000/weak`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/weak --output /out/posture-weak.json --evidence /out/posture-weak.evidence.json`
-- **Exit code:** 0, in 17.9s
+- **Exit code:** 0, in 17.7s
 - **Evidence:** `out/posture-weak.json`, `out/posture-weak.evidence.json`, `out/posture-weak.log`
 
 | Declared | Verdict | What the scanner said |
@@ -414,7 +414,7 @@ The same application with the response headers right and a cookie that carries e
 - **Target:** `http://app:8000/secure/page`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/secure/page --output /out/posture-hardened.json --evidence /out/posture-hardened.evidence.json`
-- **Exit code:** 0, in 17.8s
+- **Exit code:** 0, in 17.9s
 - **Evidence:** `out/posture-hardened.json`, `out/posture-hardened.evidence.json`, `out/posture-hardened.log`
 
 | Declared | Verdict | What the scanner said |
@@ -462,7 +462,7 @@ This URL's own response is hardened; it redirects to one that is not. Whose resp
 - **Target:** `http://app:8000/offsite`
 - **Stack:** scanner -> app (302) -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/offsite --output /out/posture-redirect-attribution.json --evidence /out/posture-redirect-attribution.evidence.json`
-- **Exit code:** 0, in 14.5s
+- **Exit code:** 0, in 14.3s
 - **Evidence:** `out/posture-redirect-attribution.json`, `out/posture-redirect-attribution.evidence.json`, `out/posture-redirect-attribution.log`
 
 | Declared | Verdict | What the scanner said |

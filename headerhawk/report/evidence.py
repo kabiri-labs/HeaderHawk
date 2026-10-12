@@ -3,12 +3,18 @@
 import json
 
 from ..compliance.evidence import (STATUS_NOT_ASSESSED, STATUS_ORDER,
-                                   STATUS_PASS, build_evidence,
-                                   unmapped_findings)
+                                   STATUS_PARTLY_ASSESSED, STATUS_PASS,
+                                   build_evidence, unmapped_findings)
 from ..core.auth import NOT_CONFIGURED, UNVERIFIED
 from ..core.findings import confidence_of
 
-_STATUS_MARK = {"Fail": "FAIL", "Not assessed": "NOT ASSESSED", "Pass": "PASS"}
+_STATUS_MARK = {"Fail": "FAIL", "Not assessed": "NOT ASSESSED",
+                "Partly assessed": "PARTLY ASSESSED", "Pass": "PASS"}
+
+# What the report calls the reasons hanging off a control somebody did judge.
+# "Not assessed because" would be a lie there - the control was assessed, just
+# not by everything that covers it.
+_BLIND_HEADING = "- **Not looked at by:**"
 
 
 def _finding_line(finding):
@@ -64,6 +70,13 @@ def render_markdown(evidence, orphans=()):
                   "covers it actually completed. Anything this scan could not "
                   "reach is listed as not assessed, with the reason, rather "
                   "than counted as compliant."]
+    if evidence["counts"][STATUS_PARTLY_ASSESSED]:
+        lines += ["",
+                  "> Several checks can cover one control. Where some judged "
+                  "it and another recorded that it could not look, the "
+                  "control is reported as partly assessed and names the check "
+                  "that was blind. It is not a pass: the check that could not "
+                  "look is where a failure would have shown."]
 
     lines += ["", "## Controls", ""]
     ordered = sorted(evidence["controls"],
@@ -80,6 +93,14 @@ def render_markdown(evidence, orphans=()):
         if result.status == STATUS_PASS:
             lines.append(f"- **Assessed by:** {', '.join(result.assessed_by)}")
             lines.append("- **Evidence:** assessed, no finding.")
+        elif result.status == STATUS_PARTLY_ASSESSED:
+            lines.append(f"- **Assessed by:** {', '.join(result.assessed_by)}")
+            lines.append("- **Evidence:** assessed by the above, no finding - "
+                         "but not everything covering this control could look, "
+                         "so this is not a pass.")
+            lines.append(_BLIND_HEADING)
+            lines += [f"  - {reason}"
+                      for reason in result.partly_assessed_because]
         elif result.status == STATUS_NOT_ASSESSED:
             reasons = result.not_assessed_because or ["no check covering this "
                                                       "control ran"]
@@ -91,6 +112,12 @@ def render_markdown(evidence, orphans=()):
             lines.append(f"- **Evidence:** {len(result.findings)} finding(s)")
             for finding in result.findings:
                 lines += _finding_line(finding)
+            if result.partly_assessed_because:
+                # The verdict stands either way, but how complete the finding
+                # list is depends on what was not looked at.
+                lines.append(_BLIND_HEADING)
+                lines += [f"  - {reason}"
+                          for reason in result.partly_assessed_because]
         lines.append("")
 
     if orphans:
@@ -123,6 +150,7 @@ def render_json(evidence, orphans=()):
                 "status": result.status,
                 "assessed_by": result.assessed_by,
                 "not_assessed_because": result.not_assessed_because,
+                "partly_assessed_because": result.partly_assessed_because,
                 "findings": result.findings,
             }
             for result in sorted(

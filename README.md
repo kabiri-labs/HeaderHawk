@@ -1,9 +1,9 @@
 # HeaderHawk
 
-[![Version](https://img.shields.io/badge/version-2.20.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.21.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-760%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-787%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -62,7 +62,7 @@ HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a 
 ```markdown
 # HeaderHawk Compliance Evidence
 
-- **Tool:** HeaderHawk 2.20.0
+- **Tool:** HeaderHawk 2.21.0
 - **Target(s):** https://app.example.com/
 - **Scan mode:** unauthenticated
 - **Requests:** 604/604 succeeded (0 failed)
@@ -73,7 +73,8 @@ HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a 
 | --- | --- |
 | Fail | 12 |
 | Not assessed | 1 |
-| Pass | 13 |
+| Partly assessed | 1 |
+| Pass | 12 |
 
 > This scan was not confirmed to be running as a logged-in user, so these results
 > describe whatever the target serves anonymously. For an authenticated product
@@ -107,9 +108,22 @@ Every control is then listed with its framework, the requirement text transcribe
 - **Not assessed because:**
   - baseline comparison: no baseline was supplied, so no change detection was
     performed (pass --baseline <previous.json>)
+
+### ASVS-5.0:4.1.3 — PARTLY ASSESSED
+
+- **Requirement:** An HTTP header field set by an intermediary layer cannot be overridden
+  by the end user.
+- **Assessed by:** Auth Bypass, Host Header Bypass, Host Header Injection
+- **Evidence:** assessed by the above, no finding - but not everything covering this
+  control could look, so this is not a pass.
+- **Not looked at by:**
+  - Unkeyed Input: the cache answered a URL this scan had just invented, so the
+    query string is not part of its key
 ```
 
-**A control only passes when a check that covers it actually completed.** That single rule is what makes the document worth putting in front of an assessor. Everything else is reported as *not assessed*, with the reason — and a finding type that maps to no catalogued requirement is listed at the end rather than quietly dropped.
+**A control only passes when everything that covers it actually looked.** That single rule is what makes the document worth putting in front of an assessor, and there are four answers to it rather than three. A requirement nothing could assess is *not assessed*, with the reason. A requirement some checks judged while another recorded that it could not look is *partly assessed*, naming the check that was blind — several checks cover one requirement, and signing it off on the strength of the ones that happened to run would drop the one whose silence could be hiding the failure. Only a requirement everything covering it could judge is a *pass*. And a finding type that maps to no catalogued requirement is listed at the end rather than quietly dropped.
+
+The distinction that decides between the middle two is whether a check *could not look* or had *nothing to look at*. A cache that answers every URL the scan invents from one stored response blinds the unkeyed search, and the requirement it covers cannot be signed off without it. A JSON reply simply has no document for a framing or CSP requirement to act on, so where another check did judge that control, nothing is missing from the record. The first costs a control its pass; the second does not.
 
 ### Findings you can act on
 
@@ -210,18 +224,32 @@ python lab/lab.py
 
 What each scenario expects is written down in [`lab/scenarios.json`](lab/scenarios.json) before anything runs, and a scenario is **exhaustive** by default: every finding the scanner would show a user at the default threshold has to be one the scenario asked for, so an undeclared finding is a false positive rather than noise the lab tolerates. Absence is read from the per-control evidence report rather than guessed from an empty findings file, because a scan that found nothing and a scan that could not look produce the same file and the difference is the whole point.
 
-The current run — [`lab/report.md`](lab/report.md), 17 scenarios against HeaderHawk 2.20.0:
+The current run — [`lab/report.md`](lab/report.md), 17 scenarios against HeaderHawk 2.21.0:
 
 | | |
 | --- | --- |
-| Declared findings produced as declared | 34 |
+| Declared findings produced as declared | 36 |
 | Declared absences that held | 39 |
-| Declared and not produced | 1 |
+| Declared and not produced | 0 |
 | Reported to a user and declared by nothing | 0 |
 
 Nothing is now reported that no scenario declared. The two defects this lab found on its first run were the same shape — a check naming a weakness without first establishing that the thing it named was there to be defeated — and both are closed. `Host Header Bypass` reported a bypass whenever the marker host came back, without asking whether anything refused an unknown host; it now establishes that first, with one well-formed request carrying the target's own host and one carrying a host minted for the scan, and an ordinary `Host` header turned out to be that baseline rather than a technique. `Web Cache Deception` read a front-end answering every URL with the same `403` as a router ignoring five static-looking suffixes, which it is — except that an identical refusal served to everyone is not a victim's page, so the bar is now a `2xx` and below it the route is reported as not assessed rather than as a pass.
 
-The one it does not report is the one worth reading. Behind a cache that ignores the query string the unkeyed search correctly refuses to guess — and the reason reaches nobody: the console says `No vulnerabilities were found.`, the findings file is empty, and the evidence report files ASVS-5.0:4.1.3 as **Pass** on the strength of the four checks that did run. `skip(reason)` is carried into the evidence only for a control left with no assessor at all, so a control assessed by some checks and blocked for others loses the fact that anybody was blind. That is the erosion this tool exists not to have, and the lab found it in one run.
+The third defect it found was the most serious, and it was not a detection defect at all. Behind a cache that ignores the query string the unkeyed search correctly refused to guess — and the reason reached nobody. The console said `No vulnerabilities were found.`, the findings file was empty, and the evidence report filed ASVS-5.0:4.1.3 as **Pass** on the strength of the four checks that did run, with `not_assessed_because: []`. A reason recorded with `skip(reason)` was carried into the evidence only for a control left with no assessor at all, so a control assessed by some checks and blocked for others lost the fact that anybody had been blind. That is the erosion this tool exists not to have, and one run found it.
+
+It is closed. That control now reports as **partly assessed** rather than passing, names the blind check under `partly_assessed_because`, and the console prints what could not be looked at instead of a bare clean result:
+
+```
+Could not assess (1):
+- Unkeyed Input: a cache answered a URL this scan had just invented
+  ('X-Cache: HIT'), so the query string is not part of its key: ...
+  The compliance evidence report names the requirements each of these
+  leaves short of a pass.
+No vulnerabilities were found - but see what could not be assessed above;
+this is not a clean bill of health for those requirements.
+```
+
+The findings file is still `[]`, which is correct: nothing was learned about that target, and inventing a finding would be the opposite failure. What changed is that the artefact says so. The scenario now declares both that control's status and that console line, so the lab fails if either goes quiet again.
 
 None of them was fixed by the lab itself, and none of them will be: a lab that edits the scanner to make its own scenarios pass is not evidence of anything. Each is its own change, with its own test, and the scenario that reproduced it records how it closed.
 
@@ -378,7 +406,7 @@ One run, one aggregated report, one summary, one exit code.
 
 **An unreachable host exits `2`, never `0`.** A pipeline that treats "no findings" as success must not be handed a silent failure. For the same reason an unexpected error never exits `1`: that code means findings were reported, and a crash is not a finding.
 
-A single check that fails unexpectedly does not end the run. It is recorded as a check that did not assess its controls — so the requirements it covers read *not assessed*, with the reason — the remaining checks still run, and both report files are still written.
+A single check that fails unexpectedly does not end the run. It is recorded as a check that could not assess its controls, and the requirements it covers say so with the reason — *not assessed* where nothing else covered them, *partly assessed* where something did, never a pass. The remaining checks still run, and both report files are still written.
 
 ### Fail on regressions, not forever
 
@@ -538,8 +566,8 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Three of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 760 tests, fully offline.
-2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 787 tests, fully offline.
+2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently. The evidence report prints that reason against every requirement the check covers: where nothing else assessed them they read *not assessed*, and where something did they read *partly assessed* rather than passing — this is the check whose silence could be hiding the finding. A check that quietly returns nothing turns an unreachable target into a clean bill of health. Use `skip_type(type, reason)` only for a surface the control does not apply to, such as a framing requirement on a JSON reply; that says what the check saw rather than what it could not see, and it does not cost a control its pass.
 3. **A detection claim is checked against a real server.** A change to what a check concludes gets a scenario in `lab/scenarios.json`, with what it should report and what it should not, and `python lab/lab.py` run against it. The lab is never edited to make the scanner pass.
 
 Fork, branch (`feat/…` or `fix/…`), keep the suite green, open a pull request.

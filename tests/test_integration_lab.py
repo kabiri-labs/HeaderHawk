@@ -252,9 +252,17 @@ class EvidenceAssertionTests(unittest.TestCase):
          "not_assessed_because": [
              "Response Header Posture: the response is application/json, not "
              "a document a browser renders, so this control had nothing to "
-             "act on"]},
+             "act on"],
+         "partly_assessed_because": []},
         {"id": "ASVS-5.0:4.1.3", "status": "Pass",
-         "not_assessed_because": []},
+         "not_assessed_because": [], "partly_assessed_because": []},
+        # Judged by some checks, with another that could not look. The reason
+        # rides in a field of its own, because the control was assessed.
+        {"id": "ASVS-5.0:8.3.1", "status": "Partly assessed",
+         "not_assessed_because": [],
+         "partly_assessed_because": [
+             "Unkeyed Input: the cache answered a URL this scan had just "
+             "invented, so the query string is not part of its key"]},
     ]}
 
     def test_a_control_reported_as_declared_with_its_reason_holds(self):
@@ -283,6 +291,30 @@ class EvidenceAssertionTests(unittest.TestCase):
         scenario = {"id": "json", "target": "http://app:8000/secure/json",
                     "controls": [{"id": "ASVS-5.0:4.1.3",
                                   "status": "Not assessed",
+                                  "why": "a search that could not look"}]}
+        verdict = runner.compare(scenario, _result(evidence=self.EVIDENCE))
+        self.assertEqual(len(verdict["false_negative"]), 1)
+        self.assertIn("reported Pass",
+                      verdict["false_negative"][0]["detail"])
+
+    def test_a_partly_assessed_control_is_read_from_its_own_field(self):
+        # A scenario asserts the reason, not which of the two fields carried
+        # it. Reading only not_assessed_because missed this one entirely.
+        scenario = {"id": "blind", "target": "http://querycache/link",
+                    "controls": [{"id": "ASVS-5.0:8.3.1",
+                                  "status": "Partly assessed",
+                                  "reason_contains": "not part of its key",
+                                  "why": "the cache made one check blind"}]}
+        verdict = runner.compare(scenario, _result(evidence=self.EVIDENCE))
+        self.assertEqual(len(verdict["true_positive"]), 1)
+        self.assertEqual(verdict["false_negative"], [])
+
+    def test_a_pass_declared_as_partly_assessed_is_a_false_negative(self):
+        # The regression this guards: a control reported Pass while something
+        # was blind is the whole defect, so declaring it must catch it.
+        scenario = {"id": "blind", "target": "http://querycache/link",
+                    "controls": [{"id": "ASVS-5.0:4.1.3",
+                                  "status": "Partly assessed",
                                   "why": "a search that could not look"}]}
         verdict = runner.compare(scenario, _result(evidence=self.EVIDENCE))
         self.assertEqual(len(verdict["false_negative"]), 1)
