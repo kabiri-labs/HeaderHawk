@@ -1,9 +1,9 @@
 # HeaderHawk
 
-[![Version](https://img.shields.io/badge/version-2.19.0-brightgreen.svg)](headerhawk.py)
+[![Version](https://img.shields.io/badge/version-2.20.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-709%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-760%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -62,7 +62,7 @@ HeaderHawk is built around those four failures: **assessed-vs-not-assessed as a 
 ```markdown
 # HeaderHawk Compliance Evidence
 
-- **Tool:** HeaderHawk 2.19.0
+- **Tool:** HeaderHawk 2.20.0
 - **Target(s):** https://app.example.com/
 - **Scan mode:** unauthenticated
 - **Requests:** 604/604 succeeded (0 failed)
@@ -158,7 +158,7 @@ A header scanner earns its place by what it refuses to report. These are the rul
 | **Host header injection** | A unique per-request marker comes back as **the host of a URL the response points a browser at** — a `Location` on a redirect status, a `Link` or `Refresh` header, or an `href`, `src`, `action` or `url=` in the body — and does so again when the same probe is repeated. That is a link- and redirect-poisoning primitive: a browser handed that response goes to a host the attacker chose. Three things deliberately do not count, because a browser does not act on any of them: a URL *printed* as text (`Requested https://marker/` in a diagnostic page, a field in a JSON error), a `Location` beside a non-redirect status, and a marker in the userinfo of a URL whose host is the target (`https://target@marker/`). Each is still reported, as `suspected`, which is what an echoed header is. |
 | **Web cache poisoning** | The poisoning request is sent through an unkeyed header, then the same URL is requested **without it**. Only a response that comes back poisoned is reported, with `X-Cache` / `Age` / `CF-Cache-Status` context — proved by a marker that survives into it where the header's value can carry one — a value minted for this scan cannot arrive from anywhere but a store — and otherwise by the clean request being answered with the poisoned response **while a request for a different key, made at the same moment, is not**. Without that control a page that changed globally part way through the scan would read as a cache replaying a poisoned copy. |
 | **Unkeyed input** | A candidate is reported when the response changes in a way a cache key built from the method, host, path and query does not capture, and the change survives a second probe. What is compared is a canonical artefact — the body with the page's own noise masked, its status, and the response headers a cache or a browser acts on — because a cache gadget changes a URL in the page, not the page's weight. The masking generalises, and only so far. A page carrying a timestamp shows three values while it is sampled and a fourth on the next request, so what is learned is the **place** it moved in — the text just before it and which occurrence of that text it was — and anything of that shape, or anything that looks generated, is masked *there*. A timestamp in a footer does not teach that every number on the page is noise; an asset hash that a header changes is a finding and not noise; and a timestamp moving in one table row does not mask the account id in the next. What moves is learned from everything the artefact covers, headers included. A page that will not reproduce itself even then falls back to its own measured variance, and says so in the finding. |
-| **Web cache deception** | A page still served under a `.css` suffix is half of it. The same URL is then requested by a session carrying **no cookies and no authorization**; content only the logged-in session should have seen, coming back to an anonymous one, is a shared cache handing one user's page to another. A response that already says `no-store` or `private` is not reported at all — that control is working. |
+| **Web cache deception** | There has to be a page first: the gadget hands the next requester what the victim was served, so the bar is a **`2xx` and nothing else**. A front-end answering every URL with the same `403` is ignoring the suffix, but an identical refusal served to everyone is not a victim's page, and a redirect carries no page either — below the bar the route is reported as *not assessed* with the status, rather than as a pass. A page still served under a `.css` suffix is then half of it. The same URL is requested again by a session carrying **no cookies and no authorization**; content only the logged-in session should have seen, coming back to an anonymous one, is a shared cache handing one user's page to another. A response that already says `no-store` or `private` is not reported at all — that control is working. |
 | **CRLF injection** | The injected header field is *named* after a unique per-scan marker, so a field carrying it cannot have come from anywhere else. A value merely echoed into `Location` is not reported. |
 | **CORS** | A per-scan origin that cannot exist is sent; only the server echoing it back counts. Severity follows `Access-Control-Allow-Credentials`, because a permissive allowlist that also allows credentials lets an attacker's page read authenticated responses. A bare `*` without credentials — correct for a public endpoint — produces nothing. |
 | **Open redirect** | The status has to be a redirect a browser follows, the host in `Location` has to be the host that was sent, an identical second probe has to redirect the same way, **and the host that was sent has to be one minted for this scan**. A fixed hostname cannot tell "the destination follows the header" from "this is where the site always redirects": a site whose canonical destination is one of the probe hostnames matches every probe for reasons that have nothing to do with the header. When the target redirects to the same place whatever the header says, nothing is reported at all. |
@@ -200,7 +200,7 @@ The threshold applies to posture only. A proven vulnerability is reported at any
 
 ### Checked against real servers, not only mocks
 
-The 709 offline tests answer one kind of question: given this response, does the check draw the right conclusion? They cannot answer the other kind, because a mock replies with whatever the test told it to — so an assumption about what a real server does that is wrong is wrong in the test too, and the test passes.
+The offline suite answers one kind of question: given this response, does the check draw the right conclusion? They cannot answer the other kind, because a mock replies with whatever the test told it to — so an assumption about what a real server does that is wrong is wrong in the test too, and the test passes.
 
 `lab/` is a Docker lab that answers the other kind. Five containers: the application under test with a vulnerable route and a secure twin for each weakness, an nginx front-end that refuses an unknown host and owns the forwarding headers, Varnish with the cache key it ships with, the same Varnish with the header added to the key, and a cache whose key leaves the query string out. One command brings it up, scans every scenario with this CLI and these defaults, compares, and tears it down:
 
@@ -210,20 +210,20 @@ python lab/lab.py
 
 What each scenario expects is written down in [`lab/scenarios.json`](lab/scenarios.json) before anything runs, and a scenario is **exhaustive** by default: every finding the scanner would show a user at the default threshold has to be one the scenario asked for, so an undeclared finding is a false positive rather than noise the lab tolerates. Absence is read from the per-control evidence report rather than guessed from an empty findings file, because a scan that found nothing and a scan that could not look produce the same file and the difference is the whole point.
 
-The current run — [`lab/report.md`](lab/report.md), 17 scenarios against HeaderHawk 2.19.0:
+The current run — [`lab/report.md`](lab/report.md), 17 scenarios against HeaderHawk 2.20.0:
 
 | | |
 | --- | --- |
 | Declared findings produced as declared | 34 |
-| Declared absences that held | 36 |
+| Declared absences that held | 39 |
 | Declared and not produced | 1 |
-| Reported to a user and declared by nothing | 3 |
+| Reported to a user and declared by nothing | 0 |
 
-The three it gets wrong are named in the report with the evidence to reproduce each one: `Host Header Bypass` is reported at `High` whenever the marker host comes back, without first establishing that anything was refusing an unknown host — on a target that validates nothing there was no refusal to get past; and `Web Cache Deception` reads a front-end that answers every URL with the same `403` as a router ignoring five static-looking suffixes, which it is, except that an identical refusal served to everyone is not a victim's page.
+Nothing is now reported that no scenario declared. The two defects this lab found on its first run were the same shape — a check naming a weakness without first establishing that the thing it named was there to be defeated — and both are closed. `Host Header Bypass` reported a bypass whenever the marker host came back, without asking whether anything refused an unknown host; it now establishes that first, with one well-formed request carrying the target's own host and one carrying a host minted for the scan, and an ordinary `Host` header turned out to be that baseline rather than a technique. `Web Cache Deception` read a front-end answering every URL with the same `403` as a router ignoring five static-looking suffixes, which it is — except that an identical refusal served to everyone is not a victim's page, so the bar is now a `2xx` and below it the route is reported as not assessed rather than as a pass.
 
 The one it does not report is the one worth reading. Behind a cache that ignores the query string the unkeyed search correctly refuses to guess — and the reason reaches nobody: the console says `No vulnerabilities were found.`, the findings file is empty, and the evidence report files ASVS-5.0:4.1.3 as **Pass** on the strength of the four checks that did run. `skip(reason)` is carried into the evidence only for a control left with no assessor at all, so a control assessed by some checks and blocked for others loses the fact that anybody was blind. That is the erosion this tool exists not to have, and the lab found it in one run.
 
-None of the three is fixed by the lab itself, and none of them will be: a lab that edits the scanner to make its own scenarios pass is not evidence of anything. Each is its own change, with its own test and its own scenario proving it.
+None of them was fixed by the lab itself, and none of them will be: a lab that edits the scanner to make its own scenarios pass is not evidence of anything. Each is its own change, with its own test, and the scenario that reproduced it records how it closed.
 
 ---
 
@@ -236,7 +236,7 @@ None of the three is fixed by the lab itself, and none of them will be: a lab th
 | Attack class | Vectors exercised |
 | ------------ | ----------------- |
 | **Host header injection** | 19 routing headers — `Host`, `X-Forwarded-Host`, `X-Forwarded-Server`, `X-Host`, `X-Original-Host`, `X-HTTP-Host-Override`, `Forwarded`, `Base-Url` and more — each probed with the shapes two parsers disagree about: the host plain, as a prefix (`target.marker`), as userinfo (`target@marker`), appended to a list (`target, marker`), with an explicit port and with a trailing dot; `Forwarded` with RFC 7239 parameter syntax; a URL-valued header with an absolute URL. Reflection is checked in the body, `Location` and every response header |
-| **Host validation bypass** | Seven wire shapes a header mapping cannot express: duplicate `Host` headers **both ways round** (which of the two wins is a choice each implementation makes for itself), the obsolete fold with a space **and** with a tab (a middlebox that strips one does not always strip the other), whitespace before the colon (RFC 7230 says a server must reject it; one that reads it anyway, behind one that rejected nothing, is the bug), absolute-URI request lines and host overrides — all sent verbatim by a purpose-built raw HTTP/1.1 client, because `requests` would normalise them away |
+| **Host validation bypass** | Six wire shapes a header mapping cannot express: duplicate `Host` headers **both ways round** (which of the two wins is a choice each implementation makes for itself), the obsolete fold with a space **and** with a tab (a middlebox that strips one does not always strip the other), whitespace before the colon (RFC 7230 says a server must reject it; one that reads it anyway, behind one that rejected nothing, is the bug) and absolute-URI request lines — all sent verbatim by a purpose-built raw HTTP/1.1 client, because `requests` would normalise them away. **A bypass is a refusal that was got past**, so a baseline establishes the refusal first: one well-formed request carrying the target's own host and one carrying a host minted for the scan. An ordinary `Host` header is that baseline, not a technique — where an unknown host is refused it *is* the refusal, and where it is not, there was nothing to bypass |
 | **Unkeyed input discovery** | **91 intermediary-set header fields** searched by bisection — `X-Forwarded-Scheme`, `CDN-Loop`, `X-Envoy-Original-Path`, `X-Wap-Profile`, … Ruling out the whole list costs **one request**; isolating one header among ninety costs about a dozen. Each one carries a value of the shape it really holds: a scheme header gets a scheme — **the one the target does not already have**, because offering a target its own scheme asks it nothing — a port header gets a port it is not already on, an address header gets an address from the documentation range. **46 of the 91** mean nothing as a hostname, and a hostname is what they all used to be sent |
 | **Web cache poisoning** | Unkeyed headers plus a cache-buster and a clean re-request that proves the poisoned response is served back |
 | **Web cache deception** | Static-looking suffixes (`.css`, `/nonexistent.js`, `;.css`, …) a router ignores but a CDN keys on |
@@ -538,7 +538,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Three of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 709 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 760 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently; the evidence report prints that reason next to the requirements consequently left unassessed. A check that quietly returns nothing turns an unreachable target into a clean bill of health.
 3. **A detection claim is checked against a real server.** A change to what a check concludes gets a scenario in `lab/scenarios.json`, with what it should report and what it should not, and `python lab/lab.py` run against it. The lab is never edited to make the scanner pass.
 
