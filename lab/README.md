@@ -120,6 +120,56 @@ discovery.
 The intrusive request-smuggling confirmation needs `--enable-desync` and is
 never sent by these scenarios.
 
+## What it has found so far
+
+Three defects, all on the lab's first runs, each closed by its own change with
+its own test and the scenario that reproduced it. None was fixed by editing the
+lab.
+
+**Two over-claims, the same shape.** A check named a weakness without first
+establishing that the thing it named was there to be defeated.
+
+- `Host Header Bypass` reported a bypass whenever the marker host came back,
+  without asking whether anything refused an unknown host. It now establishes
+  that first, with one well-formed request carrying the target's own host and
+  one carrying a host minted for the scan — and an ordinary `Host` header
+  turned out to be that baseline rather than a technique.
+- `Web Cache Deception` read a front-end answering every URL with the same
+  `403` as a router ignoring five static-looking suffixes, which it is — except
+  that an identical refusal served to everyone is not a victim's page. The bar
+  is now a `2xx`, and below it the route is reported as not assessed rather
+  than as a pass.
+
+**One silent gap in the evidence report, and it was the most serious.** It was
+not a detection defect at all. Behind a cache that ignores the query string the
+unkeyed search correctly refused to guess — and the reason reached nobody. The
+console said `No vulnerabilities were found.`, the findings file was empty, and
+the evidence report filed `ASVS-5.0:4.1.3` as **Pass** on the strength of the
+four checks that did run, with `not_assessed_because: []`. A reason recorded
+with `skip(reason)` was carried into the evidence only for a control left with
+no assessor at all, so a control assessed by some checks and blocked for others
+lost the fact that anybody had been blind.
+
+That control now reports as **partly assessed**, names the blind check under
+`partly_assessed_because`, and the console prints what could not be looked at
+instead of a bare clean result:
+
+```
+Could not assess (1):
+- Unkeyed Input: a cache answered a URL this scan had just invented
+  ('X-Cache: HIT'), so the query string is not part of its key: ...
+  The compliance evidence report names the requirements each of these
+  leaves short of a pass.
+No vulnerabilities were found - but see what could not be assessed above;
+this is not a clean bill of health for those requirements.
+```
+
+The findings file is still `[]`, which is correct: nothing was learned about
+that target, and inventing a finding would be the opposite failure. What
+changed is that the artefact says so. The `cache-blind-query-key` scenario now
+declares both that control's status and that console line, so the lab fails if
+either goes quiet again.
+
 ## Rules this lab follows
 
 - The scanner's detection logic is never changed to make a scenario pass. A
