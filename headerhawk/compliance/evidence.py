@@ -48,10 +48,16 @@ STATUS_PARTLY_ASSESSED = "Partly assessed"
 STATUS_ORDER = [STATUS_FAIL, STATUS_NOT_ASSESSED, STATUS_PARTLY_ASSESSED,
                 STATUS_PASS]
 
+# ``partly_assessed_because`` arrived after the other five fields, and this
+# type is exported from the package root, so it carries a default rather than
+# turning every existing five-argument construction into a TypeError.
+# ``build_evidence`` always passes it explicitly; the default exists only to
+# keep the older call working.
 ControlResult = namedtuple(
     "ControlResult",
     "control status findings assessed_by not_assessed_because "
-    "partly_assessed_because")
+    "partly_assessed_because",
+    defaults=((),))
 
 
 def _emitted_types(check):

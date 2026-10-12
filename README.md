@@ -3,7 +3,7 @@
 [![Version](https://img.shields.io/badge/version-2.21.0-brightgreen.svg)](headerhawk.py)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
-[![Tests](https://img.shields.io/badge/tests-784%20passing-brightgreen.svg)](tests)
+[![Tests](https://img.shields.io/badge/tests-787%20passing-brightgreen.svg)](tests)
 [![GitHub Stars](https://img.shields.io/github/stars/kabiri-labs/HeaderHawk.svg?style=social&label=Star)](https://github.com/kabiri-labs/HeaderHawk)
 
 **Evidence that your HTTP headers are safe — in a form an auditor will accept.**
@@ -566,7 +566,7 @@ Subclass `BaseTest` in a new `checks/` module, give it a `test_type`, add that t
 
 Three of them carry most of the weight:
 
-1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 784 tests, fully offline.
+1. **Every change ships with a test.** `python -m unittest discover -s tests` must pass — 787 tests, fully offline.
 2. **A check must be able to say it could not judge.** Call `skip(reason)` rather than returning silently. The evidence report prints that reason against every requirement the check covers: where nothing else assessed them they read *not assessed*, and where something did they read *partly assessed* rather than passing — this is the check whose silence could be hiding the finding. A check that quietly returns nothing turns an unreachable target into a clean bill of health. Use `skip_type(type, reason)` only for a surface the control does not apply to, such as a framing requirement on a JSON reply; that says what the check saw rather than what it could not see, and it does not cost a control its pass.
 3. **A detection claim is checked against a real server.** A change to what a check concludes gets a scenario in `lab/scenarios.json`, with what it should report and what it should not, and `python lab/lab.py` run against it. The lab is never edited to make the scanner pass.
 

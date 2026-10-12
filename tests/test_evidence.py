@@ -24,7 +24,8 @@ import requests
 import headerhawk as hhs
 from headerhawk.compliance.evidence import (STATUS_FAIL, STATUS_NOT_ASSESSED,
                                             STATUS_PARTLY_ASSESSED,
-                                            STATUS_PASS, build_evidence,
+                                            STATUS_PASS, ControlResult,
+                                            build_evidence,
                                             controls_covered_by,
                                             unmapped_findings)
 from headerhawk.core import output as hh_output
@@ -347,6 +348,33 @@ class PartlyAssessedTests(unittest.TestCase):
         self.assertEqual(result.status, STATUS_NOT_ASSESSED)
         self.assertEqual(result.not_assessed_because,
                          ["Web Cache Poisoning: the reply is application/json"])
+
+
+class ControlResultShapeTests(unittest.TestCase):
+    """The result type is exported from the package root, so its shape is API."""
+
+    def test_the_five_original_fields_still_construct_it(self):
+        # partly_assessed_because was added after them. Making it required
+        # would turn every existing five-argument construction into a
+        # TypeError, which a minor release has no business doing.
+        result = ControlResult("a control", STATUS_PASS, [], ["Open Redirect"],
+                               [])
+        self.assertEqual(result.status, STATUS_PASS)
+        self.assertEqual(result.partly_assessed_because, ())
+
+    def test_the_new_field_is_still_passed_positionally(self):
+        result = ControlResult("a control", STATUS_PARTLY_ASSESSED, [],
+                               ["Host Header Injection"], [],
+                               ["Unkeyed Input: blind"])
+        self.assertEqual(result.partly_assessed_because,
+                         ["Unkeyed Input: blind"])
+
+    def test_build_evidence_never_relies_on_the_default(self):
+        # The default exists for older callers, not for this module: a control
+        # built here always says explicitly what was and was not looked at.
+        checks = [_Check("Open Redirect", ["Open Redirect"], assessed=True)]
+        for result in build_evidence(checks, ["https://t/"])["controls"]:
+            self.assertIsInstance(result.partly_assessed_because, list)
 
 
 class BlindSpotsOnAFailTests(unittest.TestCase):
