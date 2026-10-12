@@ -152,7 +152,7 @@
         }
       ],
       "judgement": [
-        "The 'Host override' technique is reported here, and it is a gap: the check reports a bypass whenever the marker host comes back, without first establishing that anything was refusing an unknown host. Compare host-bypass-guarded, where a front-end does refuse and the check correctly reports nothing - the check can tell the difference, it just does not ask. Reproducible from the evidence file for this scenario."
+        "Closed. The check reported a bypass whenever the marker host came back, without first establishing that anything was refusing an unknown host, so 'Host override' - an ordinary Host header - was reported here at High. It now sends a baseline first: one well-formed request carrying this target's own host, and one carrying a host minted for the scan. An ordinary Host header turned out to be that baseline rather than a technique, and it cannot be a bypass in either direction - where an unknown host is refused it is the refusal, and where it is not, there was nothing to get past - so it left the technique list and the seven wire shapes became six. The five shapes above are unaffected: they are reported on the same evidence as before, with the baseline's answer added to the analysis, which on this target says plainly that no refusal was bypassed and that what was shown is a parser accepting a request it is required to reject."
       ]
     },
     {
@@ -178,7 +178,7 @@
         }
       ],
       "judgement": [
-        "Reported, and it is a false positive: the deception check asks whether a static-looking variant of the URL was served the page rather than a 404, and never asks whether the page was a success. A uniform error response satisfies the first question for every variant at once. The fix is a status check before the claim, which this pull request does not make because it does not touch detection logic. Reproduce it from out/host-bypass-guarded.json: five variants, all 403, all identical."
+        "Closed. The deception check asked whether a static-looking variant of the URL was served the page rather than a 404, and never whether the page was a success, so a front-end answering every URL with the same 403 satisfied that for all five variants at once. There is now a status check before the claim, and the bar is a 2xx and nothing else: an error is the same refusal for everybody and carries nothing of the victim's to hand to the next requester, and a redirect carries no page either - its empty body would compare equal to any other empty body under the tolerant comparison, which is the same way the 403 got through. Below the bar the route is reported as not assessed with the status in the reason, rather than as a pass, so this front-end is now recorded as something nobody could look at rather than something that was found safe."
       ]
     },
     {
@@ -235,7 +235,7 @@
         }
       ],
       "judgement": [
-        "The 'Host override' finding is the same gap as in host-bypass-reflected, reproduced on a second route: an ordinary Host header reflected by a target that validates nothing is reported as a High bypass. Here the same observation is already reported, correctly, as a confirmed Open Redirect and a confirmed Host Header Poisoning - so the bypass finding adds a third copy of it, at the highest severity of the three, describing a refusal that never happened."
+        "Closed by the same change as host-bypass-reflected, and this route is why it was worth closing twice over: the 'Host override' finding was a third copy of an observation already reported correctly here as a confirmed Open Redirect and a confirmed Host Header Poisoning, and it carried the highest severity of the three while describing a refusal that never happened. An ordinary Host header is now the baseline that establishes whether a refusal exists at all, not a technique that claims one was defeated, so the two findings that own this observation are the only ones that make it."
       ]
     },
     {

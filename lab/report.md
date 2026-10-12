@@ -2,8 +2,8 @@
 
 What this scanner does against real servers, compared with what was declared before it ran.
 
-- HeaderHawk **2.19.0**, run as `python headerhawk.py <target>` with the shipped defaults.
-- Generated 2026-10-11 11:08 UTC by `lab/run.py`. Re-run it with `python lab/lab.py`.
+- HeaderHawk **2.20.0**, run as `python headerhawk.py <target>` with the shipped defaults.
+- Generated 2026-10-12 05:30 UTC by `lab/run.py`. Re-run it with `python lab/lab.py`.
 - Reporting threshold: **medium and above**, the default. Findings below it are listed where they occur and are not counted against the scanner.
 - The intrusive request-smuggling confirmation needs `--enable-desync` and was never sent.
 
@@ -12,9 +12,9 @@ What this scanner does against real servers, compared with what was declared bef
 | | Count | What it means |
 | --- | --- | --- |
 | True positives | 34 | A finding the scenario declared, produced as declared. |
-| Absences held | 36 | Something the scenario forbade, and the scanner did not report. |
+| Absences held | 39 | Something the scenario forbade, and the scanner did not report. |
 | False negatives | 1 | Declared and not produced. |
-| False positives | 3 | Reported to a user and declared by nothing, or explicitly forbidden. |
+| False positives | 0 | Reported to a user and declared by nothing, or explicitly forbidden. |
 | Inconclusive | 0 | The run could not settle it either way. |
 
 ## Scenarios
@@ -24,9 +24,9 @@ What this scanner does against real servers, compared with what was declared bef
 | [host-injection-confirmed](#host-injection-confirmed) | scanner -> app | Host Header Injection | 2 | 1 | 0 | 0 | 0 |
 | [host-injection-echo-only](#host-injection-echo-only) | scanner -> app | Host Header Injection | 2 | 1 | 0 | 0 | 0 |
 | [host-injection-proxy-fixed](#host-injection-proxy-fixed) | scanner -> nginx -> app | Host Header Injection | 0 | 3 | 0 | 0 | 0 |
-| [host-bypass-reflected](#host-bypass-reflected) | scanner -> app (raw HTTP) | Host Header Bypass | 6 | 0 | 0 | 1 | 0 |
-| [host-bypass-guarded](#host-bypass-guarded) | scanner -> nginx (unknown host refused) -> app | Host Header Bypass | 0 | 2 | 0 | 1 | 0 |
-| [open-redirect-confirmed](#open-redirect-confirmed) | scanner -> app | Open Redirect | 5 | 1 | 0 | 1 | 0 |
+| [host-bypass-reflected](#host-bypass-reflected) | scanner -> app (raw HTTP) | Host Header Bypass | 6 | 1 | 0 | 0 | 0 |
+| [host-bypass-guarded](#host-bypass-guarded) | scanner -> nginx (unknown host refused) -> app | Host Header Bypass | 0 | 3 | 0 | 0 | 0 |
+| [open-redirect-confirmed](#open-redirect-confirmed) | scanner -> app | Open Redirect | 5 | 2 | 0 | 0 | 0 |
 | [open-redirect-canonical](#open-redirect-canonical) | scanner -> app | Open Redirect | 0 | 1 | 0 | 0 | 0 |
 | [cors-reflected](#cors-reflected) | scanner -> app | CORS | 2 | 0 | 0 | 0 | 0 |
 | [cors-allowlist](#cors-allowlist) | scanner -> app | CORS | 0 | 5 | 0 | 0 | 0 |
@@ -43,21 +43,15 @@ What this scanner does against real servers, compared with what was declared bef
 
 ### host-bypass-reflected
 
-- **Reported anyway** (forbidden by the scenario): Host Header Bypass / Potentially Vulnerable / suspected / High / Host override
-  - Bypass technique: Host override. Marker reflected in response body.
-- **Judgement:** The 'Host override' technique is reported here, and it is a gap: the check reports a bypass whenever the marker host comes back, without first establishing that anything was refusing an unknown host. Compare host-bypass-guarded, where a front-end does refuse and the check correctly reports nothing - the check can tell the difference, it just does not ask. Reproducible from the evidence file for this scenario.
+- **Judgement:** Closed. The check reported a bypass whenever the marker host came back, without first establishing that anything was refusing an unknown host, so 'Host override' - an ordinary Host header - was reported here at High. It now sends a baseline first: one well-formed request carrying this target's own host, and one carrying a host minted for the scan. An ordinary Host header turned out to be that baseline rather than a technique, and it cannot be a bypass in either direction - where an unknown host is refused it is the refusal, and where it is not, there was nothing to get past - so it left the technique list and the seven wire shapes became six. The five shapes above are unaffected: they are reported on the same evidence as before, with the baseline's answer added to the analysis, which on this target says plainly that no refusal was bypassed and that what was shown is a parser accepting a request it is required to reject.
 
 ### host-bypass-guarded
 
-- **Reported anyway** (forbidden by the scenario): Web Cache Deception / Potentially Vulnerable / suspected / Medium / (path)
-  - The application served the page rather than a 404 for 5 static-looking variant(s) of this URL (an appended extension, an extra path segment, a path parameter, an extra path segment naming a script, an extra path segment naming an image), and nothing forbids a shared cache from storing the result (no Cache-Control directive). A CDN keying on the extension would file this page as a static asset. Cache headers: n/a.
-- **Judgement:** Reported, and it is a false positive: the deception check asks whether a static-looking variant of the URL was served the page rather than a 404, and never asks whether the page was a success. A uniform error response satisfies the first question for every variant at once. The fix is a status check before the claim, which this pull request does not make because it does not touch detection logic. Reproduce it from out/host-bypass-guarded.json: five variants, all 403, all identical.
+- **Judgement:** Closed. The deception check asked whether a static-looking variant of the URL was served the page rather than a 404, and never whether the page was a success, so a front-end answering every URL with the same 403 satisfied that for all five variants at once. There is now a status check before the claim, and the bar is a 2xx and nothing else: an error is the same refusal for everybody and carries nothing of the victim's to hand to the next requester, and a redirect carries no page either - its empty body would compare equal to any other empty body under the tolerant comparison, which is the same way the 403 got through. Below the bar the route is reported as not assessed with the status in the reason, rather than as a pass, so this front-end is now recorded as something nobody could look at rather than something that was found safe.
 
 ### open-redirect-confirmed
 
-- **Reported anyway** (forbidden by the scenario): Host Header Bypass / Potentially Vulnerable / suspected / High / Host override
-  - Bypass technique: Host override. Marker reflected in 'Location': https://hhe670b15b39bd.example-collab.com/home
-- **Judgement:** The 'Host override' finding is the same gap as in host-bypass-reflected, reproduced on a second route: an ordinary Host header reflected by a target that validates nothing is reported as a High bypass. Here the same observation is already reported, correctly, as a confirmed Open Redirect and a confirmed Host Header Poisoning - so the bypass finding adds a third copy of it, at the highest severity of the three, describing a refusal that never happened.
+- **Judgement:** Closed by the same change as host-bypass-reflected, and this route is why it was worth closing twice over: the 'Host override' finding was a third copy of an observation already reported correctly here as a confirmed Open Redirect and a confirmed Host Header Poisoning, and it carried the highest severity of the three while describing a refusal that never happened. An ordinary Host header is now the baseline that establishes whether a refusal exists at all, not a technique that claims one was defeated, so the two findings that own this observation are the only ones that make it.
 
 ### cache-blind-query-key
 
@@ -81,19 +75,19 @@ A forwarding header becomes the host of a link the page points a browser at. Doe
 - **Target:** `http://app:8000/link`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/link --output /out/host-injection-confirmed.json --evidence /out/host-injection-confirmed.evidence.json`
-- **Exit code:** 1, in 18.4s
+- **Exit code:** 1, in 18.2s
 - **Evidence:** `out/host-injection-confirmed.json`, `out/host-injection-confirmed.evidence.json`, `out/host-injection-confirmed.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Host Header Injection / Vulnerable / confirmed / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh8ecd3cff2a26.example-collab.com) in the response body, and the same probe produced it again on a second request. Shape(s) reflected: appended to a |
+| Host Header Injection / Vulnerable / confirmed / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh78da1c84de81.example-collab.com) in the response body, and the same probe produced it again on a second request. Shape(s) reflected: appended to a |
 | Unkeyed Input / Potentially Vulnerable / Medium / X-Forwarded-Host | produced | 'X-Forwarded-Host' changes the response - the marker was reflected in the response - so the application honours a header field an intermediary is meant to own. No cache in front of this endpoint served the changed response back, so poisoning is not demonstrate |
 | not: Web Cache Poisoning | absent, as declared | - |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh8ecd3cff2a26.example-collab.com' 'http://app:8000/link'
+curl -s -i -H 'X-Forwarded-Host: hh78da1c84de81.example-collab.com' 'http://app:8000/link'
 ```
 
 <a id="host-injection-echo-only"></a>
@@ -105,7 +99,7 @@ The same header, printed as text and pointed at by nothing. A scanner that calls
 - **Target:** `http://app:8000/echo`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/echo --output /out/host-injection-echo-only.json --evidence /out/host-injection-echo-only.evidence.json`
-- **Exit code:** 1, in 18.5s
+- **Exit code:** 1, in 18.2s
 - **Evidence:** `out/host-injection-echo-only.json`, `out/host-injection-echo-only.evidence.json`, `out/host-injection-echo-only.log`
 
 | Declared | Verdict | What the scanner said |
@@ -117,7 +111,7 @@ The same header, printed as text and pointed at by nothing. A scanner that calls
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: app.hh38f3b233edb9.example-collab.com' 'http://app:8000/echo'
+curl -s -i -H 'X-Forwarded-Host: hh619296907fc7.example-collab.com' 'http://app:8000/echo'
 ```
 
 <a id="host-injection-proxy-fixed"></a>
@@ -129,7 +123,7 @@ The same application, behind a proxy that sets the forwarding headers itself. Th
 - **Target:** `http://allowed.lab/link`
 - **Stack:** scanner -> nginx -> app
 - **Command:** `python /hh/headerhawk.py http://allowed.lab/link --output /out/host-injection-proxy-fixed.json --evidence /out/host-injection-proxy-fixed.evidence.json`
-- **Exit code:** 0, in 1.1s
+- **Exit code:** 0, in 1.0s
 - **Evidence:** `out/host-injection-proxy-fixed.json`, `out/host-injection-proxy-fixed.evidence.json`, `out/host-injection-proxy-fixed.log`
 
 | Declared | Verdict | What the scanner said |
@@ -147,25 +141,25 @@ An application that reads every Host header it was sent, and trusts an absolute 
 - **Target:** `http://app:8000/hostreflect`
 - **Stack:** scanner -> app (raw HTTP)
 - **Command:** `python /hh/headerhawk.py http://app:8000/hostreflect --output /out/host-bypass-reflected.json --evidence /out/host-bypass-reflected.evidence.json`
-- **Exit code:** 1, in 17.9s
+- **Exit code:** 1, in 17.6s
 - **Evidence:** `out/host-bypass-reflected.json`, `out/host-bypass-reflected.evidence.json`, `out/host-bypass-reflected.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Host Header Bypass / High / Duplicate Host header | produced | Bypass technique: Duplicate Host header. Marker reflected in response body. |
-| Host Header Bypass / High / Absolute-URI request line | produced | Bypass technique: Absolute-URI request line. Marker reflected in response body. |
-| Host Header Bypass / High / Indented (line-folded) Host header | produced | Bypass technique: Indented (line-folded) Host header. Marker reflected in response body. |
-| Host Header Bypass / High / Tab-folded Host header | produced | Bypass technique: Tab-folded Host header. Marker reflected in response body. |
-| Host Header Bypass / High / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in response body. |
+| Host Header Bypass / High / Duplicate Host header | produced | Bypass technique: Duplicate Host header. Marker reflected in response body. Nothing here was refusing an unknown host - a well-formed request carrying one was answered 200, not refused - so no refusal was bypassed. What this shape shows is a parser accepting a |
+| Host Header Bypass / High / Absolute-URI request line | produced | Bypass technique: Absolute-URI request line. Marker reflected in response body. Nothing here was refusing an unknown host - a well-formed request carrying one was answered 200, not refused - so no refusal was bypassed. What this shape shows is a parser accepti |
+| Host Header Bypass / High / Indented (line-folded) Host header | produced | Bypass technique: Indented (line-folded) Host header. Marker reflected in response body. Nothing here was refusing an unknown host - a well-formed request carrying one was answered 200, not refused - so no refusal was bypassed. What this shape shows is a parse |
+| Host Header Bypass / High / Tab-folded Host header | produced | Bypass technique: Tab-folded Host header. Marker reflected in response body. Nothing here was refusing an unknown host - a well-formed request carrying one was answered 200, not refused - so no refusal was bypassed. What this shape shows is a parser accepting  |
+| Host Header Bypass / High / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in response body. Nothing here was refusing an unknown host - a well-formed request carrying one was answered 200, not refused - so no refusal was bypassed. What this shape shows is a pa |
 | Host Header Poisoning / suspected / Low / Host | produced | 'Host' is copied into the response: the marker came back in the response body. Nothing in the response points a browser at a URL whose host is the marker, so the application echoes the header rather than demonstrably routing, redirecting or building links on i |
-| nothing declared this | **reported anyway** | Host Header Bypass / Potentially Vulnerable / suspected / High / Host override |
+| not: Host Header Bypass / Host override | absent, as declared | - |
 
-**Judgement.** The 'Host override' technique is reported here, and it is a gap: the check reports a bypass whenever the marker host comes back, without first establishing that anything was refusing an unknown host. Compare host-bypass-guarded, where a front-end does refuse and the check correctly reports nothing - the check can tell the difference, it just does not ask. Reproducible from the evidence file for this scenario.
+**Judgement.** Closed. The check reported a bypass whenever the marker host came back, without first establishing that anything was refusing an unknown host, so 'Host override' - an ordinary Host header - was reported here at High. It now sends a baseline first: one well-formed request carrying this target's own host, and one carrying a host minted for the scan. An ordinary Host header turned out to be that baseline rather than a technique, and it cannot be a bypass in either direction - where an unknown host is refused it is the refusal, and where it is not, there was nothing to get past - so it left the technique list and the seven wire shapes became six. The five shapes above are unaffected: they are reported on the same evidence as before, with the baseline's answer added to the analysis, which on this target says plainly that no refusal was bypassed and that what was shown is a parser accepting a request it is required to reject.
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Host: app.hh5f46c768da9e.example-collab.com' 'http://app:8000/hostreflect'
+curl -s -i -H 'Host: app.hh2fd8d76580c9.example-collab.com' 'http://app:8000/hostreflect'
 ```
 
 <a id="host-bypass-guarded"></a>
@@ -177,22 +171,16 @@ A front-end that answers every host it does not know with 403. Does any raw shap
 - **Target:** `http://proxy/hostreflect`
 - **Stack:** scanner -> nginx (unknown host refused) -> app
 - **Command:** `python /hh/headerhawk.py http://proxy/hostreflect --output /out/host-bypass-guarded.json --evidence /out/host-bypass-guarded.evidence.json`
-- **Exit code:** 1, in 1.3s
+- **Exit code:** 0, in 1.0s
 - **Evidence:** `out/host-bypass-guarded.json`, `out/host-bypass-guarded.evidence.json`, `out/host-bypass-guarded.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
 | not: Host Header Bypass | absent, as declared | - |
 | not: Host Header Injection | absent, as declared | - |
-| nothing declared this | **reported anyway** | Web Cache Deception / Potentially Vulnerable / suspected / Medium / (path) |
+| not: Web Cache Deception | absent, as declared | - |
 
-**Judgement.** Reported, and it is a false positive: the deception check asks whether a static-looking variant of the URL was served the page rather than a 404, and never asks whether the page was a success. A uniform error response satisfies the first question for every variant at once. The fix is a status check before the claim, which this pull request does not make because it does not touch detection logic. Reproduce it from out/host-bypass-guarded.json: five variants, all 403, all identical.
-
-Reproduce the first finding:
-
-```
-curl -s -i -H '(path): an appended extension' 'http://proxy/hostreflect.css'
-```
+**Judgement.** Closed. The deception check asked whether a static-looking variant of the URL was served the page rather than a 404, and never whether the page was a success, so a front-end answering every URL with the same 403 satisfied that for all five variants at once. There is now a status check before the claim, and the bar is a 2xx and nothing else: an error is the same refusal for everybody and carries nothing of the victim's to hand to the next requester, and a redirect carries no page either - its empty body would compare equal to any other empty body under the tolerant comparison, which is the same way the 403 got through. Below the bar the route is reported as not assessed with the status in the reason, rather than as a pass, so this front-end is now recorded as something nobody could look at rather than something that was found safe.
 
 <a id="open-redirect-confirmed"></a>
 
@@ -203,25 +191,25 @@ The Host header decides where a 302 sends a browser. Does the scanner confirm it
 - **Target:** `http://app:8000/redirect`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/redirect --output /out/open-redirect-confirmed.json --evidence /out/open-redirect-confirmed.evidence.json`
-- **Exit code:** 1, in 11.9s
+- **Exit code:** 1, in 11.3s
 - **Evidence:** `out/open-redirect-confirmed.json`, `out/open-redirect-confirmed.evidence.json`, `out/open-redirect-confirmed.log`
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Open Redirect / Vulnerable / confirmed / Medium / Host | produced | The redirect target follows the 'Host' header: 'https://hh6400b096937e.example-collab.com/home' points at a host minted for this scan, on a 302 a browser follows, and an identical second probe redirected the same way. No site redirects there for its own reason |
-| Host Header Poisoning / Vulnerable / confirmed / Medium / Host | produced | 'Host' decides a host this response points a browser at: the marker came back as the host of a URL (hhf56c17b5c1c8.example-collab.com) in the 'Location' header, and the same probe produced it again on a second request. Shape(s) reflected: appended to a list, p |
-| Host Header Bypass / Indented (line-folded) Host header | produced | Bypass technique: Indented (line-folded) Host header. Marker reflected in header(s): ['Host'] |
-| Host Header Bypass / Tab-folded Host header | produced | Bypass technique: Tab-folded Host header. Marker reflected in header(s): ['Host'] |
-| Host Header Bypass / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in 'Location': https://hhe670b15b39bd.example-collab.com/home |
+| Open Redirect / Vulnerable / confirmed / Medium / Host | produced | The redirect target follows the 'Host' header: 'https://hh6ebadea9ef5e.example-collab.com/home' points at a host minted for this scan, on a 302 a browser follows, and an identical second probe redirected the same way. No site redirects there for its own reason |
+| Host Header Poisoning / Vulnerable / confirmed / Medium / Host | produced | 'Host' decides a host this response points a browser at: the marker came back as the host of a URL (hh60407c89faa0.example-collab.com) in the 'Location' header, and the same probe produced it again on a second request. Shape(s) reflected: appended to a list, p |
+| Host Header Bypass / Indented (line-folded) Host header | produced | Bypass technique: Indented (line-folded) Host header. Marker reflected in header(s): ['Host'] Nothing here was refusing an unknown host - a well-formed request carrying one was answered 302, not refused - so no refusal was bypassed. What this shape shows is a  |
+| Host Header Bypass / Tab-folded Host header | produced | Bypass technique: Tab-folded Host header. Marker reflected in header(s): ['Host'] Nothing here was refusing an unknown host - a well-formed request carrying one was answered 302, not refused - so no refusal was bypassed. What this shape shows is a parser accep |
+| Host Header Bypass / Duplicate Host header, injected first | produced | Bypass technique: Duplicate Host header, injected first. Marker reflected in 'Location': https://hh1e325242cc8e.example-collab.com/home Nothing here was refusing an unknown host - a well-formed request carrying one was answered 302, not refused - so no refusal |
 | not: Host Header Bypass / Duplicate Host header | absent, as declared | - |
-| nothing declared this | **reported anyway** | Host Header Bypass / Potentially Vulnerable / suspected / High / Host override |
+| not: Host Header Bypass / Host override | absent, as declared | - |
 
-**Judgement.** The 'Host override' finding is the same gap as in host-bypass-reflected, reproduced on a second route: an ordinary Host header reflected by a target that validates nothing is reported as a High bypass. Here the same observation is already reported, correctly, as a confirmed Open Redirect and a confirmed Host Header Poisoning - so the bypass finding adds a third copy of it, at the highest severity of the three, describing a refusal that never happened.
+**Judgement.** Closed by the same change as host-bypass-reflected, and this route is why it was worth closing twice over: the 'Host override' finding was a third copy of an observation already reported correctly here as a confirmed Open Redirect and a confirmed Host Header Poisoning, and it carried the highest severity of the three while describing a refusal that never happened. An ordinary Host header is now the baseline that establishes whether a refusal exists at all, not a technique that claims one was defeated, so the two findings that own this observation are the only ones that make it.
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Host: hhf56c17b5c1c8.example-collab.com' 'http://app:8000/redirect'
+curl -s -i -H 'Host: hh60407c89faa0.example-collab.com' 'http://app:8000/redirect'
 ```
 
 <a id="open-redirect-canonical"></a>
@@ -233,7 +221,7 @@ A 302 that always goes to one well-known destination, whatever the header says. 
 - **Target:** `http://app:8000/canonical`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/canonical --output /out/open-redirect-canonical.json --evidence /out/open-redirect-canonical.evidence.json`
-- **Exit code:** 0, in 11.6s
+- **Exit code:** 0, in 11.3s
 - **Evidence:** `out/open-redirect-canonical.json`, `out/open-redirect-canonical.evidence.json`, `out/open-redirect-canonical.log`
 
 > Not exhaustive: this endpoint redirects off the lab network, and the response-header checks follow a redirect, so what they can assess here depends on a host that does not resolve. See posture-redirect-attribution, which is about exactly that.
@@ -256,13 +244,13 @@ Any origin mirrored back, with credentials. Both halves of that are findings. Do
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| CORS Origin Reflection / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin' echoed a unique origin that cannot exist (http://hhf99b78ed4c61.example-collab.com), so the server reflects whatever Origin it is sent instead of validating against an allowlist; credentials are allowed, so an attacker's page can  |
+| CORS Origin Reflection / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin' echoed a unique origin that cannot exist (http://hhc69627d717e5.example-collab.com), so the server reflects whatever Origin it is sent instead of validating against an allowlist; credentials are allowed, so an attacker's page can  |
 | CORS Null Origin / Vulnerable / confirmed / High | produced | 'Access-Control-Allow-Origin: null' is returned for 'Origin: null', which any sandboxed iframe or redirected request can present; credentials are allowed, so an attacker's page can read authenticated responses. |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'Origin: http://hhf99b78ed4c61.example-collab.com' 'http://app:8000/cors'
+curl -s -i -H 'Origin: http://hhc69627d717e5.example-collab.com' 'http://app:8000/cors'
 ```
 
 <a id="cors-allowlist"></a>
@@ -274,7 +262,7 @@ One origin on an allowlist and no CORS headers for anyone else. Does the scanner
 - **Target:** `http://app:8000/secure/cors`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/secure/cors --output /out/cors-allowlist.json --evidence /out/cors-allowlist.evidence.json`
-- **Exit code:** 0, in 17.7s
+- **Exit code:** 0, in 17.6s
 - **Evidence:** `out/cors-allowlist.json`, `out/cors-allowlist.evidence.json`, `out/cors-allowlist.log`
 
 | Declared | Verdict | What the scanner said |
@@ -294,19 +282,19 @@ A cache with the key it ships with, in front of an application that builds links
 - **Target:** `http://cache/link`
 - **Stack:** scanner -> varnish (default key) -> app
 - **Command:** `python /hh/headerhawk.py http://cache/link --output /out/cache-poisoning-default-key.json --evidence /out/cache-poisoning-default-key.evidence.json`
-- **Exit code:** 1, in 5.3s
+- **Exit code:** 1, in 5.4s
 - **Evidence:** `out/cache-poisoning-default-key.json`, `out/cache-poisoning-default-key.evidence.json`, `out/cache-poisoning-default-key.log`
 
 > Not exhaustive: the cache changes what every other check sees on this target, and this scenario is about one claim. The scenarios either side of it are the controlled comparison.
 
 | Declared | Verdict | What the scanner said |
 | --- | --- | --- |
-| Web Cache Poisoning / Vulnerable / High / X-Forwarded-Host | produced | 'X-Forwarded-Host' was found by search rather than from a fixed list, and is unkeyed: the poisoned response was served to a request that never carried the header. Cache headers: {'Age': '0', 'X-Varnish': '98362 98361'}. |
+| Web Cache Poisoning / Vulnerable / High / X-Forwarded-Host | produced | 'X-Forwarded-Host' was found by search rather than from a fixed list, and is unkeyed: the poisoned response was served to a request that never carried the header. Cache headers: {'Age': '0', 'X-Varnish': '229409 229408'}. |
 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hh803d9cefa429.example-collab.com' 'http://cache/link?cb=hh6a268851c6'
+curl -s -i -H 'X-Forwarded-Host: hh3f64fafdb918.example-collab.com' 'http://cache/link?cb=hh84c3b550ad'
 ```
 
 <a id="cache-poisoning-keyed"></a>
@@ -318,7 +306,7 @@ The same cache with the header added to the key. The application still honours i
 - **Target:** `http://cache-keyed/link`
 - **Stack:** scanner -> varnish (header in the key) -> app
 - **Command:** `python /hh/headerhawk.py http://cache-keyed/link --output /out/cache-poisoning-keyed.json --evidence /out/cache-poisoning-keyed.evidence.json`
-- **Exit code:** 1, in 6.0s
+- **Exit code:** 1, in 5.9s
 - **Evidence:** `out/cache-poisoning-keyed.json`, `out/cache-poisoning-keyed.evidence.json`, `out/cache-poisoning-keyed.log`
 
 | Declared | Verdict | What the scanner said |
@@ -331,7 +319,7 @@ Also reported here, outside what this scenario asserts: Host Header Injection / 
 Reproduce the first finding:
 
 ```
-curl -s -i -H 'X-Forwarded-Host: hheaad606abc96.example-collab.com' 'http://cache-keyed/link'
+curl -s -i -H 'X-Forwarded-Host: hhcb3b5736bf84.example-collab.com' 'http://cache-keyed/link'
 ```
 
 <a id="cache-blind-query-key"></a>
@@ -343,7 +331,7 @@ A cache that ignores the query string answers every cache-buster from one stored
 - **Target:** `http://querycache/link`
 - **Stack:** scanner -> nginx (key without the query string) -> app
 - **Command:** `python /hh/headerhawk.py http://querycache/link --output /out/cache-blind-query-key.json --evidence /out/cache-blind-query-key.evidence.json`
-- **Exit code:** 0, in 1.2s
+- **Exit code:** 0, in 1.1s
 - **Evidence:** `out/cache-blind-query-key.json`, `out/cache-blind-query-key.evidence.json`, `out/cache-blind-query-key.log`
 
 | Declared | Verdict | What the scanner said |
@@ -367,7 +355,7 @@ A router that ignores a path parameter, on a page a shared cache is free to stor
 - **Target:** `http://app:8000/deception`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/deception --output /out/cache-deception.json --evidence /out/cache-deception.evidence.json`
-- **Exit code:** 1, in 17.9s
+- **Exit code:** 1, in 17.7s
 - **Evidence:** `out/cache-deception.json`, `out/cache-deception.evidence.json`, `out/cache-deception.log`
 
 | Declared | Verdict | What the scanner said |
@@ -389,7 +377,7 @@ A page with no response-header posture at all, over plaintext. Does the scanner 
 - **Target:** `http://app:8000/weak`
 - **Stack:** scanner -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/weak --output /out/posture-weak.json --evidence /out/posture-weak.evidence.json`
-- **Exit code:** 0, in 17.8s
+- **Exit code:** 0, in 17.9s
 - **Evidence:** `out/posture-weak.json`, `out/posture-weak.evidence.json`, `out/posture-weak.log`
 
 | Declared | Verdict | What the scanner said |
@@ -474,7 +462,7 @@ This URL's own response is hardened; it redirects to one that is not. Whose resp
 - **Target:** `http://app:8000/offsite`
 - **Stack:** scanner -> app (302) -> app
 - **Command:** `python /hh/headerhawk.py http://app:8000/offsite --output /out/posture-redirect-attribution.json --evidence /out/posture-redirect-attribution.evidence.json`
-- **Exit code:** 0, in 14.7s
+- **Exit code:** 0, in 14.5s
 - **Evidence:** `out/posture-redirect-attribution.json`, `out/posture-redirect-attribution.evidence.json`, `out/posture-redirect-attribution.log`
 
 | Declared | Verdict | What the scanner said |
