@@ -1,0 +1,621 @@
+{
+  "_about": [
+    "What each scenario expects, written from the checks' documented behaviour.",
+    "An entry under 'expect' names the fields a finding has to have; fields it",
+    "does not name are not compared. An entry under 'forbid' must match",
+    "nothing. 'exhaustive' means every finding the scanner would show a user at",
+    "the default threshold has to have been declared here - that is what turns",
+    "an undeclared finding into a false positive instead of noise.",
+    "'judgement' is where a mismatch is classified after it was investigated:",
+    "a gap in the scanner, or a mistake in the expectation."
+  ],
+  "scenarios": [
+    {
+      "id": "host-injection-confirmed",
+      "subject": "Host Header Injection",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/link",
+      "question": "A forwarding header becomes the host of a link the page points a browser at. Does the scanner confirm it, and does it say so at the grade the evidence supports?",
+      "exhaustive": true,
+      "expect": [
+        {
+          "test_type": "Host Header Injection",
+          "test_result": "Vulnerable",
+          "confidence": "confirmed",
+          "severity": "Medium",
+          "header_name": "X-Forwarded-Host",
+          "analysis_contains": "second request",
+          "why": "The marker reached the host of a URL in an href and did so again on an identical second probe, which is the bar the check sets for 'confirmed'."
+        },
+        {
+          "test_type": "Unkeyed Input",
+          "test_result": "Potentially Vulnerable",
+          "severity": "Medium",
+          "header_name": "X-Forwarded-Host",
+          "analysis_contains": "No cache in front of this endpoint",
+          "why": "The same header changes the response, and with no cache in the path the check is expected to say that poisoning is not demonstrated here rather than claim it."
+        }
+      ],
+      "forbid": [
+        {
+          "test_type": "Web Cache Poisoning",
+          "why": "There is no cache in this stack, so nothing can have been served from a store."
+        }
+      ]
+    },
+    {
+      "id": "host-injection-echo-only",
+      "subject": "Host Header Injection",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/echo",
+      "question": "The same header, printed as text and pointed at by nothing. A scanner that calls this confirmed routing is over-claiming. Does it downgrade?",
+      "exhaustive": true,
+      "expect": [
+        {
+          "test_type": "Host Header Injection",
+          "test_result": "Potentially Vulnerable",
+          "confidence": "suspected",
+          "severity": "Low",
+          "header_name": "X-Forwarded-Host",
+          "analysis_contains": "echoes the header rather than demonstrably routing",
+          "why": "A marker in prose is a copy, not a destination. The finding is expected at Low and suspected, and below the default threshold it is in the record without being shown."
+        },
+        {
+          "test_type": "Unkeyed Input",
+          "severity": "Medium",
+          "header_name": "X-Forwarded-Host",
+          "why": "The response still changes with the header, which is true and separately reported."
+        }
+      ],
+      "forbid": [
+        {
+          "test_type": "Host Header Injection",
+          "confidence": "confirmed",
+          "why": "Nothing in this response points a browser anywhere, so there is no routing primitive to confirm."
+        }
+      ]
+    },
+    {
+      "id": "host-injection-proxy-fixed",
+      "subject": "Host Header Injection",
+      "stack": "scanner -> nginx -> app",
+      "target": "http://allowed.lab/link",
+      "question": "The same application, behind a proxy that sets the forwarding headers itself. This is the fix. Does the scanner report nothing?",
+      "exhaustive": true,
+      "expect": [],
+      "forbid": [
+        {
+          "test_type": "Host Header Injection",
+          "why": "The proxy overwrites X-Forwarded-Host, so the value the scanner sent never reaches the application."
+        },
+        {
+          "test_type": "Unkeyed Input",
+          "why": "Nothing the scanner can send changes this response."
+        },
+        {
+          "test_type": "Host Header Poisoning",
+          "why": "The proxy decides the host; the client's Host header does not reach the link builder."
+        }
+      ]
+    },
+    {
+      "id": "host-bypass-reflected",
+      "subject": "Host Header Bypass",
+      "stack": "scanner -> app (raw HTTP)",
+      "target": "http://app:8000/hostreflect",
+      "question": "An application that reads every Host header it was sent, and trusts an absolute request line. Which raw shapes reach it?",
+      "exhaustive": true,
+      "expect": [
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Duplicate Host header",
+          "severity": "High",
+          "why": "Two Host headers, and this application reads both. A front-end that reads the first and a back-end that reads the last disagree, which is the bypass."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Absolute-URI request line",
+          "severity": "High",
+          "why": "The host in the request line, honoured by a back-end that validates the header instead."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Indented (line-folded) Host header",
+          "severity": "High",
+          "why": "An obsolete fold that this parser accepts as a second Host header."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Tab-folded Host header",
+          "severity": "High",
+          "why": "The same fold with a tab, which middleboxes and back-ends strip differently."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Duplicate Host header, injected first",
+          "severity": "High",
+          "why": "The pair the other way round, for a front-end that reads the first."
+        },
+        {
+          "test_type": "Host Header Poisoning",
+          "confidence": "suspected",
+          "severity": "Low",
+          "header_name": "Host",
+          "why": "The host comes back in a list item, which nothing points a browser at, so the grade is the weaker one."
+        }
+      ],
+      "forbid": [
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Host override",
+          "why": "An ordinary Host header, sent to a target that validates nothing, bypassed nothing. There is no second parser in this stack and no refusal to get past, so a High finding about it is a claim the scan cannot support."
+        }
+      ],
+      "judgement": [
+        "The 'Host override' technique is reported here, and it is a gap: the check reports a bypass whenever the marker host comes back, without first establishing that anything was refusing an unknown host. Compare host-bypass-guarded, where a front-end does refuse and the check correctly reports nothing - the check can tell the difference, it just does not ask. Reproducible from the evidence file for this scenario."
+      ]
+    },
+    {
+      "id": "host-bypass-guarded",
+      "subject": "Host Header Bypass",
+      "stack": "scanner -> nginx (unknown host refused) -> app",
+      "target": "http://proxy/hostreflect",
+      "question": "A front-end that answers every host it does not know with 403. Does any raw shape get past it, and does the scanner report one that did not?",
+      "exhaustive": true,
+      "expect": [],
+      "forbid": [
+        {
+          "test_type": "Host Header Bypass",
+          "why": "nginx refuses an unknown host and rejects the folded and duplicated shapes outright, so nothing reaches the application to be reflected."
+        },
+        {
+          "test_type": "Host Header Injection",
+          "why": "Nothing is reflected from behind the refusal."
+        },
+        {
+          "test_type": "Web Cache Deception",
+          "why": "Every URL on this front-end answers with the same 403, so every suffix looks ignored - but an identical refusal served to everyone is not a victim's page and there is nothing in it to hand to the next requester."
+        }
+      ],
+      "judgement": [
+        "Reported, and it is a false positive: the deception check asks whether a static-looking variant of the URL was served the page rather than a 404, and never asks whether the page was a success. A uniform error response satisfies the first question for every variant at once. The fix is a status check before the claim, which this pull request does not make because it does not touch detection logic. Reproduce it from out/host-bypass-guarded.json: five variants, all 403, all identical."
+      ]
+    },
+    {
+      "id": "open-redirect-confirmed",
+      "subject": "Open Redirect",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/redirect",
+      "question": "The Host header decides where a 302 sends a browser. Does the scanner confirm it with a host minted for the scan, rather than with a hostname anyone could be redirecting to?",
+      "exhaustive": true,
+      "expect": [
+        {
+          "test_type": "Open Redirect",
+          "test_result": "Vulnerable",
+          "confidence": "confirmed",
+          "severity": "Medium",
+          "header_name": "Host",
+          "analysis_contains": "minted for this scan",
+          "why": "Confirmation rests on a host no site could be redirecting to for its own reasons, and on a second probe that redirected the same way."
+        },
+        {
+          "test_type": "Host Header Poisoning",
+          "test_result": "Vulnerable",
+          "confidence": "confirmed",
+          "severity": "Medium",
+          "header_name": "Host",
+          "why": "A Location on a status a browser follows is a destination, so the same evidence confirms the routing claim - under its own finding type, which cites no requirement about intermediary headers."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Indented (line-folded) Host header",
+          "why": "The folded shape reaches the redirect builder."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Tab-folded Host header",
+          "why": "As above, with a tab."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Duplicate Host header, injected first",
+          "why": "This route reads the first Host header, so the injected-first pair reaches it and the other order does not - which is the distinction the pair exists to draw."
+        }
+      ],
+      "forbid": [
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Duplicate Host header",
+          "why": "This route reads the first Host header only, so a marker appended second never reaches it."
+        },
+        {
+          "test_type": "Host Header Bypass",
+          "header_name": "Host override",
+          "why": "Same as host-bypass-reflected: nothing was validating the host, so nothing was bypassed."
+        }
+      ],
+      "judgement": [
+        "The 'Host override' finding is the same gap as in host-bypass-reflected, reproduced on a second route: an ordinary Host header reflected by a target that validates nothing is reported as a High bypass. Here the same observation is already reported, correctly, as a confirmed Open Redirect and a confirmed Host Header Poisoning - so the bypass finding adds a third copy of it, at the highest severity of the three, describing a refusal that never happened."
+      ]
+    },
+    {
+      "id": "open-redirect-canonical",
+      "subject": "Open Redirect",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/canonical",
+      "question": "A 302 that always goes to one well-known destination, whatever the header says. The scanner sends that hostname among its probes. Does it report an open redirect that is not there?",
+      "exhaustive": false,
+      "expect": [],
+      "forbid": [
+        {
+          "test_type": "Open Redirect",
+          "why": "The destination is the same when the header names somewhere else, so the header is not deciding it. A scanner that matched its own probe host against a canonical destination would report this as a finding; the free control is what stops it."
+        }
+      ],
+      "notes": [
+        "Not exhaustive: this endpoint redirects off the lab network, and the response-header checks follow a redirect, so what they can assess here depends on a host that does not resolve. See posture-redirect-attribution, which is about exactly that."
+      ]
+    },
+    {
+      "id": "cors-reflected",
+      "subject": "CORS",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/cors",
+      "question": "Any origin mirrored back, with credentials. Both halves of that are findings. Does the scanner report both?",
+      "exhaustive": true,
+      "expect": [
+        {
+          "test_type": "CORS Origin Reflection",
+          "test_result": "Vulnerable",
+          "confidence": "confirmed",
+          "severity": "High",
+          "why": "The origin that was sent came back in Access-Control-Allow-Origin alongside Access-Control-Allow-Credentials, which is a read of the response by any site."
+        },
+        {
+          "test_type": "CORS Null Origin",
+          "test_result": "Vulnerable",
+          "confidence": "confirmed",
+          "severity": "High",
+          "why": "'null' is what a sandboxed frame sends, and this endpoint trusts it too."
+        }
+      ],
+      "forbid": []
+    },
+    {
+      "id": "cors-allowlist",
+      "subject": "CORS",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/secure/cors",
+      "question": "One origin on an allowlist and no CORS headers for anyone else. Does the scanner report nothing?",
+      "exhaustive": true,
+      "expect": [],
+      "forbid": [
+        {
+          "test_type": "CORS Origin Reflection",
+          "why": "Nothing is reflected."
+        },
+        {
+          "test_type": "CORS Null Origin",
+          "why": "'null' is not on the allowlist."
+        },
+        {
+          "test_type": "CORS Origin Validation Bypass",
+          "why": "The comparison is exact, so no suffix or prefix trick matches."
+        },
+        {
+          "test_type": "CORS Insecure Origin Trust",
+          "why": "The one trusted origin is https."
+        },
+        {
+          "test_type": "CORS Wildcard With Credentials",
+          "why": "There is no wildcard."
+        }
+      ]
+    },
+    {
+      "id": "cache-poisoning-default-key",
+      "subject": "Web Cache Poisoning",
+      "stack": "scanner -> varnish (default key) -> app",
+      "target": "http://cache/link",
+      "question": "A cache with the key it ships with, in front of an application that builds links from a forwarding header. Is the poisoned copy served to a request that never sent the header?",
+      "exhaustive": false,
+      "expect": [
+        {
+          "test_type": "Web Cache Poisoning",
+          "test_result": "Vulnerable",
+          "severity": "High",
+          "header_name": "X-Forwarded-Host",
+          "analysis_contains": "served to a request that never carried the header",
+          "why": "The gadget needs no custom VCL: X-Forwarded-Host is not in Varnish's default key, and the back-end honours it. Confirmation is the clean request coming back with the marker in it."
+        }
+      ],
+      "forbid": [],
+      "notes": [
+        "Not exhaustive: the cache changes what every other check sees on this target, and this scenario is about one claim. The scenarios either side of it are the controlled comparison."
+      ]
+    },
+    {
+      "id": "cache-poisoning-keyed",
+      "subject": "Web Cache Poisoning",
+      "stack": "scanner -> varnish (header in the key) -> app",
+      "target": "http://cache-keyed/link",
+      "question": "The same cache with the header added to the key. The application still honours it. Does the scanner stop short of calling it poisoning?",
+      "exhaustive": false,
+      "expect": [
+        {
+          "test_type": "Unkeyed Input",
+          "test_result": "Potentially Vulnerable",
+          "severity": "Medium",
+          "header_name": "X-Forwarded-Host",
+          "why": "The header still changes the response and the finding should say so. What it must not say is that anyone else was served the result."
+        }
+      ],
+      "forbid": [
+        {
+          "test_type": "Web Cache Poisoning",
+          "why": "The poisoned copy is filed under its own key, so a request that never sent the header gets the clean one. This is the one line of VCL that separates a High from a Medium, and the scanner is expected to notice it."
+        }
+      ]
+    },
+    {
+      "id": "cache-blind-query-key",
+      "subject": "Unkeyed Input",
+      "stack": "scanner -> nginx (key without the query string) -> app",
+      "target": "http://querycache/link",
+      "question": "A cache that ignores the query string answers every cache-buster from one stored response. The search cannot see anything here. Does the scanner say it was blind, or does it report a clean result?",
+      "exhaustive": false,
+      "expect": [],
+      "forbid": [
+        {
+          "test_type": "Unkeyed Input",
+          "why": "Nothing can be learned about a header here; a finding either way would be invented."
+        },
+        {
+          "test_type": "Web Cache Poisoning",
+          "why": "As above."
+        }
+      ],
+      "log_require": [
+        {
+          "text": "not part of its key",
+          "why": "Declared because this is the property the tool leads with: a check that could not look says so instead of letting the target read as clean. The reason exists inside the check - it is what PR #37 added - and the question this asserts is whether it reaches the person reading the output."
+        }
+      ],
+      "judgement": [
+        "**Not produced, and it is the most serious thing this lab found.** The search did refuse to guess: it stopped because a cache answered a URL the scan had just invented. But the reason reaches nobody. Three places were checked on this run. The console prints the banner, the progress and `No vulnerabilities were found.`, and nothing about a check that could not look. The findings file is `[]`. And the evidence report says ASVS-5.0:4.1.3 **Pass**, assessed by the four checks that did run, with `not_assessed_because: []` - 25 Pass, 1 Not assessed, and that one is the baseline requirement, not this. The string `not part of its key` appears nowhere in either artefact.",
+        "Why it happens: `skip()` records the reason on the check, and `compliance/evidence.py` reads it only for controls that end up with no assessor at all. Here three other checks also map to 4.1.3, found nothing, and carried the control to Pass - so the one check that could have found a poisoning gadget on this target drops out of the record silently. A reader of the evidence file is told the requirement was met.",
+        "This is the erosion the project's own notes name: an unassessable check falling through as a pass. It is reported and not fixed, because the fix is a change to what the evidence report promises - a control assessed by some checks and blocked for others needs a third state, or a per-check note beside the Pass - and this pull request does not touch detection or reporting logic. Reproduce it with `python lab/lab.py --only cache-blind-query-key` and read `out/cache-blind-query-key.evidence.json`."
+      ]
+    },
+    {
+      "id": "cache-deception",
+      "subject": "Web Cache Deception",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/deception",
+      "question": "A router that ignores a path parameter, on a page a shared cache is free to store. Does the scanner see the suffix being ignored?",
+      "exhaustive": true,
+      "expect": [
+        {
+          "test_type": "Web Cache Deception",
+          "test_result": "Potentially Vulnerable",
+          "severity": "Medium",
+          "analysis_contains": "static-looking variant",
+          "why": "'/deception;.css' is served as '/deception', and nothing in the response forbids a shared cache from storing it. With no CDN in this stack the check is expected to stop at potential rather than claim a confirmed deception."
+        }
+      ],
+      "forbid": []
+    },
+    {
+      "id": "posture-weak",
+      "subject": "Response header posture",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/weak",
+      "question": "A page with no response-header posture at all, over plaintext. Does the scanner report what matters, stay quiet about what does not, and leave out what plaintext makes meaningless?",
+      "exhaustive": true,
+      "markdown": true,
+      "expect": [
+        {
+          "test_type": "Content-Security-Policy",
+          "test_result": "Missing",
+          "severity": "Medium",
+          "why": "No policy at all."
+        },
+        {
+          "test_type": "Frame Protection",
+          "test_result": "Missing",
+          "severity": "Medium",
+          "why": "Neither frame-ancestors nor a usable X-Frame-Options."
+        },
+        {
+          "test_type": "Cookie HttpOnly Attribute",
+          "test_result": "Missing",
+          "severity": "Medium",
+          "why": "A session cookie a script can read."
+        },
+        {
+          "test_type": "X-Content-Type-Options",
+          "test_result": "Missing",
+          "severity": "Low",
+          "why": "Reported, and below the default threshold: in the record, not in the user's face."
+        },
+        {
+          "test_type": "Referrer-Policy",
+          "test_result": "Missing",
+          "severity": "Info",
+          "why": "Absent on most reputable sites and not a vulnerability. Info is the honest band, and the default report does not show it."
+        },
+        {
+          "test_type": "Permissions-Policy",
+          "test_result": "Missing",
+          "severity": "Info",
+          "why": "As above."
+        },
+        {
+          "test_type": "Cross-Origin-Opener-Policy",
+          "test_result": "Missing",
+          "severity": "Low",
+          "why": "Low, so recorded and not shown."
+        },
+        {
+          "test_type": "Version Disclosure",
+          "severity": "Low",
+          "why": "'ExampleServer/1.2.3' names a product and a version."
+        },
+        {
+          "test_type": "Cookie SameSite Attribute",
+          "test_result": "Missing",
+          "severity": "Low",
+          "why": "Recorded, below the threshold."
+        },
+        {
+          "test_type": "Cookie Name Prefix",
+          "test_result": "Missing",
+          "severity": "Low",
+          "why": "Recorded, below the threshold."
+        }
+      ],
+      "forbid": [
+        {
+          "test_type": "Strict-Transport-Security",
+          "why": "Over plaintext a browser ignores the header, so reporting it missing would be asking for something that cannot help. This is the applicability rule, and it is the difference between a report an engineer acts on and a list they learn to skim."
+        },
+        {
+          "test_type": "Cookie Secure Attribute",
+          "why": "Same reason: the attribute has no meaning on a plaintext origin."
+        }
+      ],
+      "md_forbid": [
+        {
+          "text": "Referrer-Policy: Missing",
+          "why": "Three findings matter on this page. A report that also lists four that do not is a report nobody finishes reading."
+        },
+        {
+          "text": "Permissions-Policy: Missing",
+          "why": "As above."
+        }
+      ]
+    },
+    {
+      "id": "posture-hardened",
+      "subject": "Response header posture",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/secure/page",
+      "question": "The same application with the response headers right and a cookie that carries every attribute. Is the answer zero?",
+      "exhaustive": true,
+      "expect": [],
+      "forbid": [
+        {
+          "test_type": "Content-Security-Policy",
+          "why": "A policy with object-src and base-uri set."
+        },
+        {
+          "test_type": "Frame Protection",
+          "why": "frame-ancestors 'none'."
+        },
+        {
+          "test_type": "X-Content-Type-Options",
+          "why": "nosniff."
+        },
+        {
+          "test_type": "Referrer-Policy",
+          "why": "no-referrer."
+        },
+        {
+          "test_type": "Permissions-Policy",
+          "why": "Set."
+        },
+        {
+          "test_type": "Cross-Origin-Opener-Policy",
+          "why": "same-origin."
+        },
+        {
+          "test_type": "Cookie HttpOnly Attribute",
+          "why": "Set."
+        },
+        {
+          "test_type": "Cookie SameSite Attribute",
+          "why": "Lax."
+        },
+        {
+          "test_type": "Cookie Name Prefix",
+          "why": "The cookie is named __Host-sid."
+        },
+        {
+          "test_type": "CSP Violation Reporting",
+          "why": "The policy names a reporting endpoint."
+        },
+        {
+          "test_type": "Version Disclosure",
+          "why": "The Server header names no version."
+        }
+      ]
+    },
+    {
+      "id": "posture-json",
+      "subject": "Response header posture",
+      "stack": "scanner -> app",
+      "target": "http://app:8000/secure/json",
+      "question": "An API reply with none of the document headers. A browser renders nothing here, so they are neither failures nor passes. Does the scanner report them as not assessed, with the reason?",
+      "exhaustive": true,
+      "expect": [],
+      "forbid": [
+        {
+          "test_type": "Frame Protection",
+          "why": "There is no document to embed."
+        },
+        {
+          "test_type": "Referrer-Policy",
+          "why": "No navigation originates from a JSON body."
+        },
+        {
+          "test_type": "Permissions-Policy",
+          "why": "No browser features to govern."
+        },
+        {
+          "test_type": "Content-Security-Policy",
+          "why": "Nothing is rendered, so no policy governs it."
+        }
+      ],
+      "controls": [
+        {
+          "id": "ASVS-5.0:3.4.3",
+          "status": "Not assessed",
+          "reason_contains": "not a document a browser renders",
+          "why": "The requirement was not met and not failed: nobody looked, because there was nothing to look at. Counting it as a pass is the failure this tool exists not to have."
+        },
+        {
+          "id": "ASVS-5.0:3.4.6",
+          "status": "Not assessed",
+          "reason_contains": "not a document a browser renders",
+          "why": "Framing, on a reply no browser frames."
+        },
+        {
+          "id": "ASVS-5.0:3.4.5",
+          "status": "Not assessed",
+          "reason_contains": "not a document a browser renders",
+          "why": "As above, for the next document control in the catalogue."
+        }
+      ]
+    },
+    {
+      "id": "posture-redirect-attribution",
+      "subject": "Response header posture",
+      "stack": "scanner -> app (302) -> app",
+      "target": "http://app:8000/offsite",
+      "question": "This URL's own response is hardened; it redirects to one that is not. Whose response headers end up in the report, and does the report say whose they are?",
+      "exhaustive": false,
+      "expect": [
+        {
+          "test_type": "Content-Security-Policy",
+          "test_result": "Missing",
+          "url": "http://app:8000/weak",
+          "why": "The posture check follows the redirect, and the finding names the URL it actually assessed. That part is honest, and this scenario records it rather than asserting a behaviour nobody has decided on."
+        }
+      ],
+      "forbid": [],
+      "judgement": [
+        "Worth a decision, not a defect in detection: the findings name the URL they came from, but the evidence report's target list names the URL that was asked for, so a per-control Pass or Fail can be earned by a different response than the one an assessor thinks they are reading. A scan of a URL that redirects off-site also leaves the target, which is why this lab's network has no route anywhere. Not fixed here: changing it is a decision about the evidence report's contract, and this pull request does not touch detection logic."
+      ]
+    }
+  ]
+}
