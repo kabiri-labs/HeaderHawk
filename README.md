@@ -227,7 +227,9 @@ python headerhawk.py https://app.example.com/dashboard \
        --auth-verify-text 'Sign out'
 ```
 
-Always pass `--auth-verify-text`. Without it the scan cannot tell the product from its login page, and an authenticated scan that silently ran logged out is the most expensive kind of wrong answer. With it, the scan stops instead.
+**State an expectation.** `--auth-verify-text 'Sign out'` names something only a logged-in page contains; `--auth-verify-absent 'Sign in'` is the inverse and just as explicit. Either one makes the check decisive: if it fails, the scan **stops** rather than assess the logged-out pages and present them as the product's.
+
+With neither, the scan falls back to comparing the credentialed response against an anonymous one. A response the credentials visibly changed is reported as `authenticated`; one they did not change is reported as `authentication unverified`, because the scan may then not be assessing the authenticated surface at all. That fallback is weaker evidence than an expectation you stated, which is why one is recommended rather than required.
 
 ### 5. From a captured request
 
@@ -261,7 +263,11 @@ Methods: POST
 
 Four headers, not six: `Host` became the target and `Content-Length` belongs to the body, so neither travels as a header.
 
-Every check now tests that endpoint **as the authenticated `POST` it really is**: the session cookie and bearer token ride on every probe, the JSON body is replayed on `POST`, and each check still sets the header it is testing — replacing the file's value where it already carries one. The raw-socket `Host` bypasses included, so they are tested as the real request rather than as an anonymous `GET`.
+**Your session now rides on every probe.** The cookie, the bearer token and the CSRF header go out with each request the scan makes — including the raw-socket `Host` bypasses, which build their header block from the file rather than from a default one. A bypass tested without the session the real request carried would be probing a different, usually unauthenticated, request. Each check still sets the header it is testing, replacing the file's value where it already carries one.
+
+**The method and body reach the checks that are about the request itself.** Host header injection, open redirect, routing-header SSRF and URL-parameter SSRF send the file's method, and the body is replayed on it. The rest ask a question that is a `GET` question by its nature — the posture of one response, a cache key, a CORS preflight, a vhost sweep — and issue `GET` with your session attached.
+
+So a `POST`-only surface is exercised with its real method and body by those four, and probed as an authenticated `GET` by the others. **If the endpoint refuses `GET`, those checks assess the refusal** — a `405` is a response like any other, and its headers are what the posture result then describes. For an endpoint that only answers one method, scan a `GET`-answering route for posture and use the request file for the request-side classes.
 
 **Replay it elsewhere.** Give an explicit URL and the file's headers and body come along to a different environment:
 
